@@ -58,11 +58,18 @@ TIMEOUT_SECONDS = float(os.environ.get("TIMEOUT_SECONDS", "60"))
 logger.info(f"HTTP请求超时设置为 {TIMEOUT_SECONDS} 秒")
 
 # 默认开发API密钥（只用于本地开发，在生产环境中应该通过环境变量设置）
-if not ALLOWED_API_KEYS and os.environ.get("ENVIRONMENT") != "production":
+if os.environ.get("ENVIRONMENT") != "production":
     TEMP_API_KEY = os.environ.get("TEMP_API_KEY", "temp_api_key")
     TEMP_API_KEY_ONE = os.environ.get("TEMP_API_KEY_ONE", "temp_api_key_one")
     ALLOWED_API_KEYS = [TEMP_API_KEY, TEMP_API_KEY_ONE]
     logger.info(f"使用临时API密钥: {TEMP_API_KEY}, {TEMP_API_KEY_ONE}")
+else:
+    # 生产环境，只有明确设置了环境变量才使用
+    TEMP_API_KEY = os.environ.get("TEMP_API_KEY")
+    TEMP_API_KEY_ONE = os.environ.get("TEMP_API_KEY_ONE")
+    if TEMP_API_KEY or TEMP_API_KEY_ONE:
+        ALLOWED_API_KEYS = [key for key in [TEMP_API_KEY, TEMP_API_KEY_ONE] if key]
+        logger.info(f"生产环境使用配置的API密钥，共 {len(ALLOWED_API_KEYS)} 个")
 
 # 验证API密钥
 async def verify_api_key(credentials: HTTPAuthorizationCredentials = Security(security)):
