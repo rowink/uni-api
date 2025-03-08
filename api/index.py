@@ -382,10 +382,95 @@ def get_random_config_for_model(model: str):
     logger.info(f"使用直接匹配: {model} (配置ID: {selected[0].get('id', 'unknown')})")
     return selected
 
-# OpenAI兼容端点
-@app.api_route("/v1/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
-async def openai_proxy(path: str, request: Request):
-    """OpenAI API兼容代理"""
+# 获取所有可用模型列表的端点
+@app.api_route("/v1/models", methods=["GET", "POST"])
+async def list_available_models(request: Request):
+    """返回所有可用模型的列表，兼容OpenAI API格式"""
+    try:
+        # 从请求中获取API密钥进行身份验证
+        api_key = await get_api_key_from_request(request)
+        
+        # 使用现有函数获取所有模型映射
+        mappings_response = await list_model_mappings(api_key=None)  # 直接调用函数，不通过API
+        model_mappings = mappings_response.get("mappings", {})
+        
+        # 使用现有函数获取所有配置
+        configs_response = await list_configs(api_key=None)  # 直接调用函数，不通过API
+        all_configs = configs_response.get("configs", [])
+        
+        # 提取所有已配置的模型
+        all_models = set()
+        
+        # 创建一个反向映射字典，用于查找模型别名
+        reverse_model_mappings = {}
+        
+        # 处理模型映射
+        for unified_name, vendor_models in model_mappings.items():
+            # 统一模型名称作为别名
+            all_models.add(unified_name)
+            
+            # 记录实际模型名称到别名的映射
+            for vendor_model in vendor_models.values():
+                if vendor_model not in reverse_model_mappings:
+                    reverse_model_mappings[vendor_model] = unified_name
+        
+        # 从配置中获取模型
+        for config in all_configs:
+            for model in config["models"]:
+                # 如果模型有映射别名，使用别名
+                if model in reverse_model_mappings:
+                    all_models.add(reverse_model_mappings[model])
+                else:
+                    # 查看配置本身的模型映射
+                    model_mappings_in_config = config.get("model_mappings", {})
+                    if model_mappings_in_config:
+                        # 检查这个模型是否在配置的映射中作为实际模型
+                        is_mapped = False
+                        for alias, actual_model in model_mappings_in_config.items():
+                            if actual_model == model:
+                                all_models.add(alias)
+                                is_mapped = True
+                        
+                        # 如果模型没有被映射，则添加原始名称
+                        if not is_mapped:
+                            all_models.add(model)
+                    else:
+                        # 没有映射，直接添加原始模型名称
+                        all_models.add(model)
+        
+        # 按照OpenAI API格式构造响应
+        model_list = []
+        current_time = int(datetime.now().timestamp() * 1000)  # 毫秒级时间戳
+        
+        for model_id in sorted(all_models):
+            model_list.append({
+                "id": model_id,
+                "object": "model",
+                "created": current_time,
+                "owned_by": "uniapi"
+            })
+        
+        # 返回最终结果
+        return {
+            "object": "list",
+            "data": model_list
+        }
+    
+    except HTTPException as e:
+        # 重新抛出HTTP异常
+        raise e
+    except Exception as e:
+        # 记录详细错误并返回500错误
+        logger.error(f"获取模型列表时出错: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取模型列表时出错: {str(e)}"
+        )
+
+# OpenAI兼容端点 - 仅代理chat/completions
+@app.api_route("/v1/chat/completions", methods=["GET", "POST", "PUT", "DELETE"])
+async def openai_proxy(request: Request):
+    """OpenAI API兼容代理 - 仅支持chat/completions端点"""
     # 验证API密钥（从请求头中获取）
     auth_header = request.headers.get("Authorization")
     if not auth_header:
@@ -423,10 +508,6 @@ async def openai_proxy(path: str, request: Request):
             detail="认证格式错误。请使用'Authorization: Bearer YOUR_API_KEY'格式"
         )
     
-    # 只处理 chat/completions 请求
-    if path != "chat/completions":
-        raise HTTPException(status_code=404, detail="端点不存在")
-    
     # 获取请求内容
     body = await request.body()
     body_dict = json.loads(body) if body else {}
@@ -436,7 +517,7 @@ async def openai_proxy(path: str, request: Request):
     if not model:
         raise HTTPException(status_code=400, detail="请求中未指定模型")
     
-    logger.info(f"收到API请求: 路径={path}, 模型={model}")
+    logger.info(f"收到API请求: 路径=/v1/chat/completions, 模型={model}")
     
     try:
         # 随机选择配置，并获取实际模型名称
@@ -630,100 +711,3 @@ async def get_api_key_from_request(request: Request):
             status_code=401,
             detail="认证格式错误。请使用'Authorization: Bearer YOUR_API_KEY'格式"
         )
-
-#
-# @app.post("/api/debug/stream")
-# async def debug_stream(request: Request):
-#     """调试流式请求"""
-#     await get_api_key_from_request(request)  # 验证API密钥
-#     try:
-#         # 获取请求内容
-#         body = await request.body()
-#         body_dict = json.loads(body) if body else {}
-#
-#         # 确保请求中包含stream=True
-#         body_dict["stream"] = True
-#
-#         # 获取模型名称和目标URL
-#         model = body_dict.get("model", "")
-#         target_url = body_dict.get("target_url", "")
-#
-#         if not model or not target_url:
-#             return {
-#                 "error": "缺少必要参数",
-#                 "message": "请提供model和target_url参数"
-#             }
-#
-#         # 随机选择配置，并获取实际模型名称
-#         config, actual_model = get_random_config_for_model(model)
-#
-#         # 如果实际模型名称与请求的不同，替换请求中的模型名称
-#         if actual_model != model:
-#             body_dict["model"] = actual_model
-#
-#         # 重新编码请求体
-#         body = json.dumps(body_dict).encode()
-#
-#         # 准备转发
-#         headers = dict(request.headers)
-#         headers.pop("host", None)
-#
-#         # 移除所有形式的authorization头（不区分大小写）
-#         auth_headers = [k for k in headers.keys() if k.lower() == "authorization"]
-#         for key in auth_headers:
-#             headers.pop(key)
-#
-#         # 更新Content-Length头以匹配新的请求体长度
-#         content_length_headers = [k for k in headers.keys() if k.lower() == "content-length"]
-#         for key in content_length_headers:
-#             headers.pop(key)
-#
-#         # 添加新的Content-Length头
-#         headers["Content-Length"] = str(len(body))
-#
-#         # 添加正确的Authorization头
-#         headers["Authorization"] = f"Bearer {config['api_key']}"
-#
-#         # 设置正确的Content-Type
-#         headers["Content-Type"] = "application/json"
-#
-#         async def stream_generator():
-#             client = httpx.AsyncClient(follow_redirects=True, timeout=TIMEOUT_SECONDS)
-#             try:
-#                 async with client.stream(
-#                     "POST",
-#                     target_url,
-#                     headers=headers,
-#                     json=body_dict
-#                 ) as response:
-#                     # 检查状态码
-#                     if not response.is_success:
-#                         error_content = await response.read()
-#                         yield error_content
-#                         return
-#
-#                     # 直接逐块读取和输出内容
-#                     async for chunk in response.aiter_bytes():
-#                         if chunk:
-#                             yield chunk
-#             except Exception as e:
-#                 logger.error(f"流式测试出错: {str(e)}")
-#                 yield f"data: {{\"error\":\"流式测试出错: {str(e)}\"}}\n\n".encode()
-#             finally:
-#                 await client.aclose()
-#
-#         # 返回流式响应
-#         return StreamingResponse(
-#             stream_generator(),
-#             media_type="text/event-stream",
-#             headers={
-#                 "Cache-Control": "no-cache",
-#                 "Content-Type": "text/event-stream"
-#             }
-#         )
-#     except Exception as e:
-#         logger.error(f"流式测试出错: {str(e)}")
-#         return JSONResponse(
-#             content={"error": "流式测试出错", "message": str(e)},
-#             status_code=500
-#         )
