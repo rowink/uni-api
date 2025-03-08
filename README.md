@@ -31,13 +31,13 @@ pip install -r requirements.txt
 3. 设置环境变量（可选，开发模式下有默认值）
 ```bash
 # Windows PowerShell
-$env:API_KEY_1="your_api_key_1"
-$env:API_KEY_2="your_api_key_2"
+$env:TEMP_API_KEY_ONE="your_api_key_1"
+$env:TEMP_API_KEY="your_api_key_2"
 $env:ADMIN_API_KEY="your_admin_key"  # 默认为 "adminadmin"
 
 # Linux/macOS
-export API_KEY_1="your_api_key_1"
-export API_KEY_2="your_api_key_2"
+export TEMP_API_KEY_ONE="your_api_key_1"
+export TEMP_API_KEY="your_api_key_2"
 export ADMIN_API_KEY="your_admin_key"  # 默认为 "adminadmin"
 ```
 
@@ -57,7 +57,7 @@ UniAPI有两种类型的API密钥：
    - 可以管理API配置和模型映射
    - 可以调用API
 
-2. **普通API密钥**（API_KEY_1到API_KEY_5）:
+2. **普通API密钥**（TEMP_API_KEY_ONE到API_KEY_5）:
    - 只能调用API
    - 不能访问管理面板
    - 不能管理API配置和模型映射
@@ -73,13 +73,13 @@ UniAPI有两种类型的API密钥：
 2. 调用API:
    - 使用curl或其他HTTP客户端
    - 支持的端点: `/v1/chat/completions`
-   - 使用开发API密钥（在非生产环境）：`dev_api_key_1`或`dev_api_key_2`
+   - 使用临时API密钥（在非生产环境）：`temp_api_key`或`temp_api_key_one`
 
 ```bash
 # 测试聊天完成
 curl -X POST http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer dev_api_key_1" \
+  -H "Authorization: Bearer temp_api_key" \
   -d '{
     "model": "gpt-3.5-turbo",
     "messages": [{"role": "user", "content": "你好"}]
@@ -88,7 +88,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 
 3. 在应用程序中配置:
    - 将您的OpenAI客户端库指向 `http://localhost:8000`
-   - 使用开发API密钥作为认证令牌
+   - 使用临时API密钥作为认证令牌
    - 注意：当前版本只支持 `/v1/chat/completions` 端点
 
 ### Vercel部署
@@ -97,7 +97,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 2. 在Vercel上创建新项目并导入该仓库
 3. 配置环境变量：
    - `ADMIN_API_KEY`: 管理员API密钥，用于访问管理面板（必须设置）
-   - `API_KEY_1` 到 `API_KEY_5`: 配置1-5个允许访问的API密钥（至少配置一个）
+   - `TEMP_API_KEY_ONE` 到 `API_KEY_5`: 配置1-5个允许访问的API密钥（至少配置一个）
    - `REDIS_URL`: Redis连接URL（如果要持久化存储配置）
    - `ENVIRONMENT`: 设置为`production`以禁用开发模式下的默认API密钥
 
@@ -111,7 +111,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 Authorization: Bearer your_api_key
 ```
 
-您可以通过环境变量`API_KEY_1`到`API_KEY_5`配置最多5个允许的API密钥，这些密钥可以用于调用API但不能访问管理面板。
+您可以通过环境变量`TEMP_API_KEY_ONE`到`API_KEY_5`配置最多5个允许的API密钥，这些密钥可以用于调用API但不能访问管理面板。
 管理员API密钥可以通过环境变量`ADMIN_API_KEY`设置，默认值为`adminadmin`。
 
 ## API使用说明

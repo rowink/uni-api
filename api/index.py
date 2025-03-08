@@ -49,10 +49,6 @@ security = HTTPBearer(auto_error=False)
 
 # 从环境变量获取允许的API密钥
 ALLOWED_API_KEYS = []
-for i in range(1, 6):  # 最多支持5个API密钥
-    key_env_var = f"API_KEY_{i}"
-    if key_env_var in os.environ and os.environ[key_env_var]:
-        ALLOWED_API_KEYS.append(os.environ[key_env_var])
 
 # 获取管理员API密钥
 ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "adminadmin")
@@ -63,7 +59,10 @@ logger.info(f"HTTP请求超时设置为 {TIMEOUT_SECONDS} 秒")
 
 # 默认开发API密钥（只用于本地开发，在生产环境中应该通过环境变量设置）
 if not ALLOWED_API_KEYS and os.environ.get("ENVIRONMENT") != "production":
-    ALLOWED_API_KEYS = ["dev_api_key_1", "dev_api_key_2"]
+    TEMP_API_KEY = os.environ.get("TEMP_API_KEY", "temp_api_key")
+    TEMP_API_KEY_ONE = os.environ.get("TEMP_API_KEY_ONE", "temp_api_key_one")
+    ALLOWED_API_KEYS = [TEMP_API_KEY, TEMP_API_KEY_ONE]
+    logger.info(f"使用临时API密钥: {TEMP_API_KEY}, {TEMP_API_KEY_ONE}")
 
 # 验证API密钥
 async def verify_api_key(credentials: HTTPAuthorizationCredentials = Security(security)):
@@ -71,7 +70,7 @@ async def verify_api_key(credentials: HTTPAuthorizationCredentials = Security(se
         # 如果没有配置任何API密钥，则禁止所有访问
         raise HTTPException(
             status_code=401,
-            detail="未配置允许的API密钥。请在环境变量中设置API_KEY_1至API_KEY_5或ADMIN_API_KEY"
+            detail="未配置允许的API密钥。请在环境变量中设置TEMP_API_KEY或ADMIN_API_KEY"
         )
     
     if not credentials:
@@ -493,7 +492,7 @@ async def openai_proxy(request: Request):
         if not ALLOWED_API_KEYS and not ADMIN_API_KEY:
             raise HTTPException(
                 status_code=401,
-                detail="未配置允许的API密钥。请在环境变量中设置API_KEY_1至API_KEY_5或ADMIN_API_KEY"
+                detail="未配置允许的API密钥。请在环境变量中设置TEMP_API_KEY或ADMIN_API_KEY"
             )
         
         # 验证API密钥
@@ -695,7 +694,7 @@ async def get_api_key_from_request(request: Request):
         if not ALLOWED_API_KEYS and not ADMIN_API_KEY:
             raise HTTPException(
                 status_code=401,
-                detail="未配置允许的API密钥。请在环境变量中设置API_KEY_1至API_KEY_5或ADMIN_API_KEY"
+                detail="未配置允许的API密钥。请在环境变量中设置TEMP_API_KEY或ADMIN_API_KEY"
             )
         
         # 验证API密钥
