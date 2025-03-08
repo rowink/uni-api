@@ -57,6 +57,10 @@ for i in range(1, 6):  # 最多支持5个API密钥
 # 获取管理员API密钥
 ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "adminadmin")
 
+# 获取HTTP请求超时设置
+TIMEOUT_SECONDS = float(os.environ.get("TIMEOUT_SECONDS", "60"))
+logger.info(f"HTTP请求超时设置为 {TIMEOUT_SECONDS} 秒")
+
 # 默认开发API密钥（只用于本地开发，在生产环境中应该通过环境变量设置）
 if not ALLOWED_API_KEYS and os.environ.get("ENVIRONMENT") != "production":
     ALLOWED_API_KEYS = ["dev_api_key_1", "dev_api_key_2"]
@@ -485,14 +489,13 @@ async def openai_proxy(path: str, request: Request):
         
         if is_stream:
             async def stream_generator():
-                client = httpx.AsyncClient(follow_redirects=True)
+                client = httpx.AsyncClient(follow_redirects=True, timeout=TIMEOUT_SECONDS)
                 try:
                     async with client.stream(
                         request.method,
                         url,
                         headers=headers,
-                        content=body,
-                        timeout=60.0
+                        content=body
                     ) as response:
                         # 检查状态码
                         if not response.is_success:
@@ -521,13 +524,12 @@ async def openai_proxy(path: str, request: Request):
             )
         else:
             # 非流式请求的处理
-            async with httpx.AsyncClient(follow_redirects=True) as client:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=TIMEOUT_SECONDS) as client:
                 response = await client.request(
                     request.method,
                     url,
                     headers=headers,
-                    content=body,
-                    timeout=60.0
+                    content=body
                 )
                 
                 # 直接返回响应内容
@@ -695,12 +697,11 @@ async def debug_forward(request: Request):
         headers["Authorization"] = f"Bearer {config['api_key']}"
         
         # 发送请求
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
             response = await client.post(
                 target_url,
                 headers=headers,
-                content=body,
-                timeout=60.0
+                content=body
             )
             
             # 返回详细信息
@@ -786,14 +787,13 @@ async def debug_stream(request: Request):
         headers["Content-Type"] = "application/json"
         
         async def stream_generator():
-            client = httpx.AsyncClient(follow_redirects=True)
+            client = httpx.AsyncClient(follow_redirects=True, timeout=TIMEOUT_SECONDS)
             try:
                 async with client.stream(
                     "POST",
                     target_url,
                     headers=headers,
-                    content=body,
-                    timeout=60.0
+                    json=body_dict
                 ) as response:
                     # 检查状态码
                     if not response.is_success:
