@@ -1,0 +1,24 @@
+/* UniAPI 样式 */
+.api-logo {
+    font-weight: bold;
+    font-size: 2rem;
+    color: #007bff;
+    margin-bottom: 2rem;
+}
+
+.api-footer {
+    margin-top: 3rem;
+    text-align: center;
+    color: #6c757d;
+    font-size: 0.9rem;
+}
+
+.api-version {
+    display: inline-block;
+    background-color: #343a40;
+    color: white;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.8rem;
+    margin-left: 0.5rem;
+} 

@@ -1,0 +1,1123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UniAPI - LLM Stream Optimizer</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <style>
+        :root {
+            --primary-color: #6366f1;
+            --primary-hover: #4f46e5;
+            --bg-color: #f8fafc;
+            --card-bg: #ffffff;
+            --border-color: #e2e8f0;
+        }
+        
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-color);
+            min-height: 100vh;
+        }
+        
+        .navbar {
+            background-color: var(--card-bg);
+            border-bottom: 1px solid var(--border-color);
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            padding: 0;
+            height: 56px;
+        }
+        
+        .navbar-brand {
+            color: var(--primary-color) !important;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 1.25rem;
+            padding: 0;
+        }
+        
+        .navbar-brand::before {
+            content: "✨";
+        }
+        
+        .btn-logout {
+            color: #64748b;
+            border: 1px solid #e2e8f0;
+            background: transparent;
+            padding: 0.4rem 1rem;
+            border-radius: 0.5rem;
+            transition: all 0.2s;
+            font-size: 0.875rem;
+        }
+        
+        .btn-logout:hover {
+            background-color: #f1f5f9;
+            color: #334155;
+        }
+        
+        .main-content {
+            padding: 0;
+        }
+        
+        .nav-tabs {
+            border-bottom: 1px solid var(--border-color);
+            margin: 0;
+            padding: 0;
+            background-color: var(--card-bg);
+        }
+        
+        .nav-tabs .nav-item:first-child .nav-link {
+            margin-left: 1.5rem;
+        }
+        
+        .nav-tabs .nav-link {
+            color: #64748b;
+            border: none;
+            padding: 1rem 1.5rem;
+            font-weight: 500;
+            position: relative;
+            margin-bottom: -1px;
+        }
+        
+        .nav-tabs .nav-link.active {
+            color: var(--primary-color);
+            background: none;
+            border: none;
+        }
+        
+        .nav-tabs .nav-link.active::after {
+            content: "";
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background-color: var(--primary-color);
+        }
+        
+        .tab-content {
+            padding: 1.5rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .tab-content .card {
+            width: 100%;
+            max-width: none;
+        }
+        
+        #add-config .card,
+        #api-docs .card,
+        #manage-config .card {
+            margin: 0;
+            max-width: none;
+        }
+        
+        #manage-config {
+            padding: 0;
+        }
+        
+        .container-fluid {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0;
+        }
+        
+        .navbar .container-fluid {
+            padding: 0 1.5rem;
+        }
+        
+        .row {
+            margin: 0;
+        }
+        
+        .col-lg-8 {
+            padding: 0;
+        }
+        
+        .card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 0.75rem;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+            margin-bottom: 0;
+            width: 100%;
+        }
+        
+        .card-header {
+            background-color: transparent;
+            border-bottom: 1px solid var(--border-color);
+            padding: 1rem 1.25rem;
+            font-weight: 600;
+            color: #1e293b;
+        }
+        
+        .card-body {
+            padding: 1.25rem;
+        }
+        
+        .form-label {
+            color: #475569;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+        }
+        
+        .form-control {
+            border-color: var(--border-color);
+            border-radius: 0.5rem;
+            padding: 0.75rem 1rem;
+        }
+        
+        .form-control:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+        
+        .btn-primary {
+            background-color: var(--primary-color);
+            border-color: var(--primary-color);
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            font-weight: 500;
+        }
+        
+        .btn-primary:hover {
+            background-color: var(--primary-hover);
+            border-color: var(--primary-hover);
+        }
+        
+        .config-item {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 0.75rem;
+            padding: 1.25rem;
+            margin-bottom: 0;
+            transition: all 0.2s;
+        }
+        
+        .config-item:hover {
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        
+        .models-badge {
+            background-color: #f1f5f9;
+            color: #475569;
+            font-weight: 500;
+            padding: 0.5rem 0.75rem;
+            border-radius: 0.375rem;
+            margin-right: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+        
+        .configs-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 1rem;
+            padding: 0;
+        }
+        
+        .form-text {
+            color: #64748b;
+            font-size: 0.875rem;
+            margin-top: 0.5rem;
+        }
+        
+        .badge .btn-close {
+            font-size: 0.5em;
+            margin-left: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <div id="app" style="display: none;">
+        <nav class="navbar">
+            <div class="container-fluid">
+                <a class="navbar-brand" href="/admin">UniAPI</a>
+                <button id="logoutBtn" class="btn btn-logout">退出登录</button>
+            </div>
+        </nav>
+
+        <div class="main-content">
+            <div class="container-fluid">
+                <ul class="nav nav-tabs" id="mainTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="add-config-tab" data-bs-toggle="tab" data-bs-target="#add-config" type="button" role="tab">
+                            添加配置
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="manage-config-tab" data-bs-toggle="tab" data-bs-target="#manage-config" type="button" role="tab">
+                            配置管理
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="api-docs-tab" data-bs-toggle="tab" data-bs-target="#api-docs" type="button" role="tab">
+                            API文档
+                        </button>
+                    </li>
+                </ul>
+
+                <div class="tab-content">
+                    <!-- 添加配置 Tab -->
+                    <div class="tab-pane fade show active" id="add-config" role="tabpanel">
+                        <div class="card">
+                            <div class="card-header">
+                                添加新的API配置
+                            </div>
+                            <div class="card-body">
+                                <form id="apiConfigForm">
+                                    <div class="mb-4">
+                                        <label class="form-label">API密钥</label>
+                                        <div class="input-group mb-2">
+                                            <input type="text" class="form-control" id="apiKeyInput" placeholder="输入API密钥">
+                                            <button class="btn btn-outline-secondary" type="button" id="addApiKeyBtn">添加</button>
+                                        </div>
+                                        <div id="apiKeyTags" class="d-flex flex-wrap gap-1 mt-2"></div>
+                                        <input type="hidden" id="apiKeys" required>
+                                        <div class="form-text">添加一个或多个API密钥，每个密钥将创建一个独立的配置。</div>
+                                    </div>
+                                    <div class="mb-4">
+                                        <label for="baseUrl" class="form-label">Base URL</label>
+                                        <input type="url" class="form-control" id="baseUrl" required
+                                            placeholder="例如: https://api.openai.com">
+                                        <div class="form-text">
+                                            Base URL规则:
+                                            <ul class="mb-2">
+                                                <li>以 / 结尾: 忽略v1版本，直接拼接chat/completions</li>
+                                                <li>以 # 结尾: 强制使用输入的地址(移除#)</li>
+                                                <li>其他情况: 自动拼接/v1/chat/completions</li>
+                                            </ul>
+                                        </div>
+                                        <div id="urlPreview" class="form-text mt-2">
+                                            <strong>实际请求URL: </strong><span class="text-muted">请输入Base URL</span>
+                                        </div>
+                                    </div>
+                                    <div class="mb-4">
+                                        <label for="models" class="form-label">支持的模型 <i class="bi bi-arrow-clockwise text-primary" id="refreshModelsBtn" style="cursor: pointer; font-size: 0.9rem;" title="从API获取模型列表"></i></label>
+                                        <div class="input-group mb-2">
+                                            <input type="text" class="form-control" id="modelInput" placeholder="模型名称">
+                                            <input type="text" class="form-control" id="modelMappingInput" placeholder="映射名称 (可选)">
+                                            <button class="btn btn-outline-secondary" type="button" id="addModelBtn">添加</button>
+                                        </div>
+                                        <div id="modelTags" class="d-flex flex-wrap gap-1 mt-2"></div>
+                                        <input type="hidden" id="models" required>
+                                        <input type="hidden" id="modelMappings">
+                                        <div class="form-text">添加此API配置支持的实际模型名称。如果需要，可以为每个模型设置映射名称，这样就可以用映射名称代替实际模型名称发起请求。点击刷新图标可自动从API获取可用模型列表。</div>
+                                    </div>
+                                    <button type="submit" class="btn btn-primary w-100">添加配置</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 配置管理 Tab -->
+                    <div class="tab-pane fade" id="manage-config" role="tabpanel">
+                        <div class="card">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <span>已配置的API密钥</span>
+                                <div class="text-muted small">示例请求: <code id="apiEndpoint"></code>/v1/chat/completions</div>
+                            </div>
+                            <div class="card-body">
+                                <div id="configsList" class="configs-grid"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- API文档 Tab -->
+                    <div class="tab-pane fade" id="api-docs" role="tabpanel">
+                        <div class="card">
+                            <div class="card-header">
+                                API使用说明
+                            </div>
+                            <div class="card-body">
+                                <h5 class="mb-4">快速开始</h5>
+                                <p>UniAPI作为OpenAI API的代理服务，当前版本仅支持 <code>/v1/chat/completions</code> 端点，系统会自动根据请求的模型选择合适的API密钥。</p>
+                                
+                                <h6 class="mt-4 mb-3">示例请求</h6>
+                                <pre class="bg-light p-3 rounded"><code>curl <span id="apiEndpointDoc"></span>/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer your_api_key" \
+    -d '{
+        "model": "gpt-3.5-turbo",
+        "messages": [{"role": "user", "content": "你好"}],
+        "stream": true
+    }'</code></pre>
+                                
+                                <h6 class="mt-4 mb-3">认证</h6>
+                                <p>所有请求都需要通过 <code>Authorization</code> 请求头进行认证：</p>
+                                <pre class="bg-light p-3 rounded"><code>Authorization: Bearer your_api_key</code></pre>
+                                
+                                <h6 class="mt-4 mb-3">支持的端点</h6>
+                                <div class="alert alert-info">
+                                    当前版本仅支持以下端点:
+                                </div>
+                                <ul class="list-unstyled">
+                                    <li class="mb-3">
+                                        <code>POST /v1/chat/completions</code>
+                                        <p class="text-muted mb-0">创建聊天完成</p>
+                                    </li>
+                                </ul>
+                                
+                                <h6 class="mt-4 mb-3">请求参数</h6>
+                                <p>请求参数与OpenAI官方API一致，主要包括：</p>
+                                <ul>
+                                    <li><code>model</code>: 要使用的模型名称</li>
+                                    <li><code>messages</code>: 消息数组，包含role和content</li>
+                                    <li><code>temperature</code>: 温度参数，控制随机性</li>
+                                    <li><code>max_tokens</code>: 生成的最大token数</li>
+                                    <li><code>stream</code>: 是否使用流式输出</li>
+                                </ul>
+                                
+                                <div class="alert alert-warning mt-4">
+                                    <strong>注意：</strong> 其他OpenAI API端点（如completions、embeddings等）暂不支持。未来版本可能会增加更多端点支持。
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 编辑配置的模态框 -->
+        <div class="modal fade" id="editConfigModal" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">编辑API配置</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <form id="editConfigForm">
+                            <input type="hidden" id="editConfigId">
+                            <div class="mb-3">
+                                <label for="editApiKey" class="form-label">API密钥</label>
+                                <input type="text" class="form-control" id="editApiKey" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="editBaseUrl" class="form-label">Base URL</label>
+                                <input type="url" class="form-control" id="editBaseUrl" required
+                                    placeholder="例如: https://api.openai.com">
+                                <div class="form-text">
+                                    Base URL规则:
+                                    <ul class="mb-2">
+                                        <li>以 / 结尾: 忽略v1版本，直接拼接chat/completions</li>
+                                        <li>以 # 结尾: 强制使用输入的地址(移除#)</li>
+                                        <li>其他情况: 自动拼接/v1/chat/completions</li>
+                                    </ul>
+                                </div>
+                                <div id="editUrlPreview" class="form-text mt-2">
+                                    <strong>实际请求URL: </strong><span class="text-muted">请输入Base URL</span>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label for="editModels" class="form-label">支持的模型</label>
+                                <div class="input-group mb-2">
+                                    <input type="text" class="form-control" id="editModelInput" placeholder="模型名称">
+                                    <input type="text" class="form-control" id="editModelMappingInput" placeholder="映射名称 (可选)">
+                                    <button class="btn btn-outline-secondary" type="button" id="addEditModelBtn">添加</button>
+                                </div>
+                                <div id="editModelTags" class="d-flex flex-wrap gap-1 mt-2"></div>
+                                <input type="hidden" id="editModels" required>
+                                <input type="hidden" id="editModelMappings">
+                                <div class="form-text">添加此API配置支持的实际模型名称。如果需要，可以为每个模型设置映射名称，这样就可以用映射名称代替实际模型名称发起请求。</div>
+                            </div>
+                        </form>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                        <button type="button" class="btn btn-primary" id="saveEditBtn">保存更改</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 页面加载时初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            // 显示主应用界面
+            document.getElementById('app').style.display = 'block';
+            
+            // 更新API端点
+            updateApiEndpoint();
+            
+            // 初始化所有功能
+            initLogout();
+            setupModelTags();
+            setupApiKeyInput();
+            setupFormSubmission();
+            setupTabListeners();
+            
+            // 添加刷新模型按钮事件
+            document.getElementById('refreshModelsBtn').addEventListener('click', fetchModelsList);
+            
+            // 加载初始配置
+            loadConfigs();
+        });
+
+        // 获取认证头
+        function getAuthHeaders() {
+            // 通过cookie认证，不需要手动添加Authorization头
+            return {
+                'Content-Type': 'application/json'
+            };
+        }
+
+        // 设置标签页切换监听
+        function setupTabListeners() {
+            const tabs = document.querySelectorAll('[data-bs-toggle="tab"]');
+            tabs.forEach(tab => {
+                tab.addEventListener('shown.bs.tab', function (event) {
+                    if (event.target.id === 'manage-config-tab') {
+                        loadConfigs();
+                    }
+                });
+            });
+        }
+
+        // 添加API密钥标签
+        function addApiKeyTag(apiKey) {
+            const apiKeyTags = document.getElementById('apiKeyTags');
+            const apiKeys = document.getElementById('apiKeys');
+            
+            // 检查是否已存在该密钥
+            const currentKeys = apiKeys.value ? apiKeys.value.split(',') : [];
+            if (currentKeys.includes(apiKey)) {
+                return;
+            }
+            
+            // 创建新标签
+            const tag = document.createElement('span');
+            tag.className = 'badge bg-primary me-1 mb-1 d-flex align-items-center';
+            tag.innerHTML = `
+                ${apiKey.substring(0, 10)}${apiKey.length > 10 ? '...' : ''}
+                <button type="button" class="btn-close btn-close-white ms-2" aria-label="Close"></button>
+            `;
+            
+            // 添加删除功能
+            const closeBtn = tag.querySelector('.btn-close');
+            closeBtn.addEventListener('click', function() {
+                const keys = apiKeys.value.split(',');
+                const index = keys.indexOf(apiKey);
+                if (index > -1) {
+                    keys.splice(index, 1);
+                    apiKeys.value = keys.join(',');
+                }
+                tag.remove();
+            });
+            
+            // 添加到DOM和隐藏字段
+            apiKeyTags.appendChild(tag);
+            
+            // 更新隐藏字段
+            currentKeys.push(apiKey);
+            apiKeys.value = currentKeys.join(',');
+        }
+
+        // 设置API密钥输入
+        function setupApiKeyInput() {
+            document.getElementById('addApiKeyBtn').addEventListener('click', function() {
+                const apiKeyInput = document.getElementById('apiKeyInput');
+                const apiKey = apiKeyInput.value.trim();
+                
+                if (apiKey) {
+                    addApiKeyTag(apiKey);
+                    apiKeyInput.value = '';
+                }
+            });
+
+            document.getElementById('apiKeyInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    document.getElementById('addApiKeyBtn').click();
+                }
+            });
+        }
+
+        // 添加模型标签
+        function addModelTag(model, mappingName = '', tagsId = 'modelTags', modelsId = 'models', mappingsId = 'modelMappings') {
+            const modelTags = document.getElementById(tagsId);
+            const models = document.getElementById(modelsId);
+            const modelMappings = document.getElementById(mappingsId);
+            
+            // 检查是否已存在该模型
+            const currentModels = models.value ? models.value.split(',') : [];
+            if (currentModels.includes(model)) {
+                return;
+            }
+            
+            // 创建新标签
+            const tag = document.createElement('span');
+            tag.className = 'badge bg-secondary me-1 mb-1 d-flex align-items-center';
+            
+            let displayText = model;
+            if (mappingName) {
+                displayText += ` → ${mappingName}`;
+                
+                // 更新映射关系
+                let mappingsObj = {};
+                if (modelMappings.value) {
+                    try {
+                        mappingsObj = JSON.parse(modelMappings.value);
+                    } catch (e) {
+                        console.error('解析模型映射失败', e);
+                        mappingsObj = {};
+                    }
+                }
+                mappingsObj[mappingName] = model;
+                modelMappings.value = JSON.stringify(mappingsObj);
+            }
+            
+            tag.innerHTML = `
+                ${displayText}
+                <button type="button" class="btn-close btn-close-white ms-2" aria-label="Close"></button>
+            `;
+            
+            // 添加删除功能
+            const closeBtn = tag.querySelector('.btn-close');
+            closeBtn.addEventListener('click', function() {
+                // 从模型列表中移除
+                const modelsList = models.value.split(',');
+                const index = modelsList.indexOf(model);
+                if (index > -1) {
+                    modelsList.splice(index, 1);
+                    models.value = modelsList.join(',');
+                }
+                
+                // 从映射中移除
+                if (mappingName && modelMappings.value) {
+                    try {
+                        const mappingsObj = JSON.parse(modelMappings.value);
+                        delete mappingsObj[mappingName];
+                        modelMappings.value = JSON.stringify(mappingsObj);
+                    } catch (e) {
+                        console.error('解析模型映射失败', e);
+                    }
+                }
+                
+                tag.remove();
+            });
+            
+            // 添加到DOM
+            modelTags.appendChild(tag);
+            
+            // 更新隐藏字段
+            currentModels.push(model);
+            models.value = currentModels.join(',');
+        }
+
+        // 设置模型标签
+        function setupModelTags() {
+            // 主表单添加模型
+            document.getElementById('addModelBtn').addEventListener('click', function() {
+                const modelInput = document.getElementById('modelInput');
+                const modelMappingInput = document.getElementById('modelMappingInput');
+                
+                const model = modelInput.value.trim();
+                const mapping = modelMappingInput.value.trim();
+                
+                if (model) {
+                    addModelTag(model, mapping);
+                    modelInput.value = '';
+                    modelMappingInput.value = '';
+                }
+            });
+            
+            document.getElementById('modelInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    document.getElementById('addModelBtn').click();
+                }
+            });
+            
+            document.getElementById('modelMappingInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    document.getElementById('addModelBtn').click();
+                }
+            });
+            
+            // 编辑表单添加模型
+            document.getElementById('addEditModelBtn').addEventListener('click', function() {
+                const modelInput = document.getElementById('editModelInput');
+                const modelMappingInput = document.getElementById('editModelMappingInput');
+                
+                const model = modelInput.value.trim();
+                const mapping = modelMappingInput.value.trim();
+                
+                if (model) {
+                    addModelTag(model, mapping, 'editModelTags', 'editModels', 'editModelMappings');
+                    modelInput.value = '';
+                    modelMappingInput.value = '';
+                }
+            });
+            
+            document.getElementById('editModelInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    document.getElementById('addEditModelBtn').click();
+                }
+            });
+            
+            document.getElementById('editModelMappingInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    document.getElementById('addEditModelBtn').click();
+                }
+            });
+        }
+
+        // 设置表单提交
+        function setupFormSubmission() {
+            document.getElementById('apiConfigForm').addEventListener('submit', function(e) {
+                e.preventDefault(); // 阻止默认表单提交行为
+                addConfig(e);
+            });
+            document.getElementById('saveEditBtn').addEventListener('click', saveEditedConfig);
+        }
+        
+        // 更新API端点
+        function updateApiEndpoint() {
+            const host = window.location.origin;
+            document.getElementById('apiEndpoint').textContent = host;
+            document.getElementById('apiEndpointDoc').textContent = host;
+        }
+
+        // 退出登录
+        function initLogout() {
+            document.getElementById('logoutBtn').addEventListener('click', function() {
+                // 发送请求删除cookie
+                fetch('/logout', {
+                    method: 'POST'
+                }).then(() => {
+                    window.location.href = '/login';
+                });
+            });
+        }
+
+        // 加载配置列表
+        async function loadConfigs() {
+            try {
+                const response = await fetch('/api/configs');
+                
+                if (response.status === 401 || response.status === 403) {
+                    window.location.href = '/login';
+                    return;
+                }
+
+                const data = await response.json();
+                displayConfigs(data);
+            } catch (error) {
+                console.error('加载配置失败:', error);
+                document.getElementById('configsList').innerHTML = '<div class="alert alert-danger">加载配置失败，请检查网络连接</div>';
+            }
+        }
+
+        // 修改添加API配置函数
+        async function addConfig(event) {
+            event.preventDefault();
+            
+            const apiKeys = document.getElementById('apiKeys').value.split(',').filter(k => k.trim());
+            const baseUrl = document.getElementById('baseUrl').value;
+            const models = document.getElementById('models').value.split(',').filter(m => m.trim());
+            const modelMappingsStr = document.getElementById('modelMappings').value;
+            
+            let modelMappings = {};
+            if (modelMappingsStr) {
+                try {
+                    modelMappings = JSON.parse(modelMappingsStr);
+                } catch (e) {
+                    console.error('解析模型映射失败', e);
+                    modelMappings = {};
+                }
+            }
+            
+            if (!apiKeys.length || !baseUrl || !models.length) {
+                alert('请填写所有必填字段');
+                return;
+            }
+            
+            try {
+                // 为每个API密钥创建配置
+                const promises = apiKeys.map(apiKey => 
+                    fetch('/api/configs', {
+                        method: 'POST',
+                        headers: getAuthHeaders(),
+                        body: JSON.stringify({
+                            api_key: apiKey,
+                            base_url: baseUrl,
+                            models: models,
+                            model_mappings: modelMappings
+                        })
+                    })
+                );
+                
+                const results = await Promise.allSettled(promises);
+                
+                // 检查结果
+                const failures = results.filter(r => r.status === 'rejected' || !r.value.ok);
+                if (failures.length > 0) {
+                    alert(`部分配置添加失败，请检查错误信息`);
+                }
+                
+                // 重置表单
+                document.getElementById('apiConfigForm').reset();
+                document.getElementById('apiKeyTags').innerHTML = '';
+                document.getElementById('apiKeys').value = '';
+                document.getElementById('modelTags').innerHTML = '';
+                document.getElementById('models').value = '';
+                document.getElementById('modelMappings').value = '';
+                
+                // 重新加载配置
+                loadConfigs();
+            } catch (error) {
+                console.error('添加配置失败:', error);
+                alert('添加配置失败，请检查网络连接');
+            }
+        }
+
+        // 修改保存编辑后的配置
+        async function saveEditedConfig() {
+            const configId = document.getElementById('editConfigId').value;
+            const apiKey = document.getElementById('editApiKey').value;
+            const baseUrl = document.getElementById('editBaseUrl').value;
+            const models = document.getElementById('editModels').value.split(',').filter(m => m.trim());
+            const modelMappingsStr = document.getElementById('editModelMappings').value;
+            
+            let modelMappings = {};
+            if (modelMappingsStr) {
+                try {
+                    modelMappings = JSON.parse(modelMappingsStr);
+                } catch (e) {
+                    console.error('解析模型映射失败', e);
+                    modelMappings = {};
+                }
+            }
+            
+            if (!baseUrl || !models.length) {
+                alert('请填写所有必填字段');
+                return;
+            }
+            
+            try {
+                // 准备请求数据
+                const requestData = {
+                    base_url: baseUrl,
+                    models: models,
+                    model_mappings: modelMappings
+                };
+                
+                // 如果API密钥字段有值，则包含它
+                if (apiKey) {
+                    requestData.api_key = apiKey;
+                }
+                
+                // 发送更新请求
+                const response = await fetch(`/api/configs/${configId}`, {
+                    method: 'PUT',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify(requestData)
+                });
+                
+                if (response.status === 401) {
+                    alert('访问密钥已失效，请重新登录');
+                    window.location.href = '/login';
+                    return;
+                }
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || '更新失败');
+                }
+                
+                // 关闭模态框
+                const modal = bootstrap.Modal.getInstance(document.getElementById('editConfigModal'));
+                modal.hide();
+                
+                // 重新加载配置
+                loadConfigs();
+            } catch (error) {
+                console.error('更新配置失败:', error);
+                alert(`更新失败: ${error.message || '未知错误'}`);
+            }
+        }
+        
+        // 添加填充配置编辑表单的代码
+        function fillEditForm(config) {
+            document.getElementById('editConfigId').value = config.id;
+            document.getElementById('editApiKey').value = config.api_key.startsWith('**') ? '' : config.api_key;
+            document.getElementById('editBaseUrl').value = config.base_url;
+            
+            // 清空现有标签
+            document.getElementById('editModelTags').innerHTML = '';
+            document.getElementById('editModels').value = '';
+            document.getElementById('editModelMappings').value = '';
+            
+            // 添加模型标签
+            if (config.models && config.models.length) {
+                // 构建反向映射表
+                const reverseMapping = {};
+                if (config.model_mappings) {
+                    for (const [mappingName, modelName] of Object.entries(config.model_mappings)) {
+                        reverseMapping[modelName] = mappingName;
+                    }
+                }
+                
+                config.models.forEach(model => {
+                    // 查找此模型是否有映射
+                    const mappingName = reverseMapping[model] || '';
+                    addModelTag(model, mappingName, 'editModelTags', 'editModels', 'editModelMappings');
+                });
+            }
+            
+            // 存储完整的映射数据
+            if (config.model_mappings) {
+                document.getElementById('editModelMappings').value = JSON.stringify(config.model_mappings);
+            }
+        }
+        
+        // 修改编辑配置函数
+        async function editConfig(event) {
+            const configId = event.target.dataset.id;
+            
+            try {
+                // 获取配置详情
+                const response = await fetch(`/api/configs/${configId}`);
+                
+                if (response.status === 401) {
+                    alert('访问密钥已失效，请重新登录');
+                    window.location.href = '/login';
+                    return;
+                }
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || '获取配置详情失败');
+                }
+                
+                const config = await response.json();
+                
+                // 填充表单
+                fillEditForm(config);
+                
+                // 显示模态框
+                const modal = new bootstrap.Modal(document.getElementById('editConfigModal'));
+                modal.show();
+            } catch (error) {
+                console.error('获取配置详情失败:', error);
+                alert('获取配置详情失败，请重试');
+            }
+        }
+        
+        // 修改加载配置列表函数，更改显示映射的方式
+        function displayConfigs(data) {
+            const configsList = document.getElementById('configsList');
+            configsList.innerHTML = '';
+            
+            if (data.configs && data.configs.length > 0) {
+                data.configs.forEach(config => {
+                    const configItem = document.createElement('div');
+                    configItem.className = 'config-item';
+                    
+                    let modelBadges = '';
+                    config.models.forEach(model => {
+                        // 查找此模型是否有映射
+                        let mappedName = null;
+                        if (config.model_mappings) {
+                            for (const [mappingName, modelName] of Object.entries(config.model_mappings)) {
+                                if (modelName === model) {
+                                    mappedName = mappingName;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        if (mappedName) {
+                            modelBadges += `<span class="badge models-badge">${model} → ${mappedName}</span>`;
+                        } else {
+                            modelBadges += `<span class="badge models-badge">${model}</span>`;
+                        }
+                    });
+                    
+                    configItem.innerHTML = `
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <strong class="text-truncate me-2">${config.base_url}</strong>
+                            <div class="flex-shrink-0">
+                                <button class="btn btn-sm btn-primary edit-btn me-1" data-id="${config.id}">编辑</button>
+                                <button class="btn btn-sm btn-danger delete-btn" data-id="${config.id}">删除</button>
+                            </div>
+                        </div>
+                        <div><small class="text-truncate d-block">密钥: ${config.api_key}</small></div>
+                        <div class="mt-2 mb-1">模型:</div>
+                        <div class="d-flex flex-wrap gap-1">${modelBadges}</div>
+                    `;
+                    
+                    configsList.appendChild(configItem);
+                });
+                
+                // 添加删除事件监听
+                document.querySelectorAll('.delete-btn').forEach(btn => {
+                    btn.addEventListener('click', deleteConfig);
+                });
+                
+                // 添加编辑事件监听
+                document.querySelectorAll('.edit-btn').forEach(btn => {
+                    btn.addEventListener('click', editConfig);
+                });
+            } else {
+                configsList.innerHTML = '<div class="alert alert-info">尚未配置任何API密钥</div>';
+            }
+        }
+        
+        // 添加删除配置函数定义
+        async function deleteConfig(event) {
+            event.stopPropagation(); // 阻止事件冒泡
+            const configId = event.target.dataset.id;
+            
+            if (confirm('确定要删除此配置吗？')) {
+                try {
+                    const response = await fetch(`/api/configs/${configId}`, {
+                        method: 'DELETE'
+                    });
+                    
+                    if (response.status === 401) {
+                        alert('访问密钥已失效，请重新登录');
+                        window.location.href = '/login';
+                        return;
+                    }
+                    
+                    if (response.ok) {
+                        // 删除成功后，只更新显示，不重新加载所有配置
+                        const configElement = event.target.closest('.config-item');
+                        if (configElement) {
+                            configElement.remove();
+                        }
+                        
+                        // 如果没有配置了，显示提示信息
+                        const configsList = document.getElementById('configsList');
+                        if (!configsList.children.length) {
+                            configsList.innerHTML = '<div class="alert alert-info">尚未配置任何API密钥</div>';
+                        }
+                    } else {
+                        const error = await response.json();
+                        alert(`删除失败: ${error.detail || '未知错误'}`);
+                    }
+                } catch (error) {
+                    console.error('删除配置失败:', error);
+                    alert('删除配置失败，请检查网络连接');
+                }
+            }
+        }
+        
+        // 更新URL预览
+        function updateUrlPreview(inputElement, previewElement) {
+            const baseUrl = inputElement.value.trim();
+            let previewUrl = '';
+            
+            if (baseUrl) {
+                if (baseUrl.endsWith('#')) {
+                    previewUrl = `<code>${baseUrl.slice(0, -1)}</code>`;
+                } else if (baseUrl.endsWith('/')) {
+                    previewUrl = `<code>${baseUrl}chat/completions</code>`;
+                } else {
+                    previewUrl = `<code>${baseUrl}/v1/chat/completions</code>`;
+                }
+            } else {
+                previewUrl = '<span class="text-muted">请输入Base URL</span>';
+            }
+            
+            previewElement.innerHTML = `<strong>实际请求URL: </strong>${previewUrl}`;
+        }
+
+        // 添加URL预览事件监听
+        document.addEventListener('DOMContentLoaded', function() {
+            const baseUrlInput = document.getElementById('baseUrl');
+            const urlPreview = document.getElementById('urlPreview');
+            const editBaseUrlInput = document.getElementById('editBaseUrl');
+            const editUrlPreview = document.getElementById('editUrlPreview');
+            
+            baseUrlInput.addEventListener('input', () => updateUrlPreview(baseUrlInput, urlPreview));
+            editBaseUrlInput.addEventListener('input', () => updateUrlPreview(editBaseUrlInput, editUrlPreview));
+        });
+
+        // 添加自动获取模型列表功能
+        function fetchModelsList() {
+            const baseUrl = document.getElementById('baseUrl').value.trim();
+            
+            if (!baseUrl) {
+                alert('请先输入Base URL');
+                return;
+            }
+            
+            let modelEndpoint = baseUrl;
+            if (baseUrl.endsWith('#')) {
+                modelEndpoint = baseUrl.slice(0, -1) + '/v1/models';
+            } else if (baseUrl.endsWith('/')) {
+                modelEndpoint = baseUrl + 'v1/models';
+            } else {
+                modelEndpoint = baseUrl + '/v1/models';
+            }
+            
+            // 提示用户正在获取
+            const btn = document.getElementById('refreshModelsBtn');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 获取中...';
+            btn.disabled = true;
+            
+            // 获取API密钥进行验证
+            let apiKey = '';
+            const apiKeysValue = document.getElementById('apiKeys').value;
+            if (apiKeysValue) {
+                apiKey = apiKeysValue.split(',')[0];
+            }
+            
+            fetch(modelEndpoint, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': apiKey ? `Bearer ${apiKey}` : ''
+                }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`API请求失败: ${response.status} ${response.statusText}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                // 恢复按钮状态
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+                
+                if (!data.data || !Array.isArray(data.data) || data.data.length === 0) {
+                    alert('未找到可用模型');
+                    return;
+                }
+                
+                // 获取模型ID列表
+                const modelIds = data.data.map(model => model.id);
+                
+                // 确认对话框
+                const confirmed = confirm(`发现 ${modelIds.length} 个模型:\n\n${modelIds.join('\n')}\n\n是否自动添加这些模型?`);
+                
+                if (confirmed) {
+                    // 为每个模型ID添加标签
+                    modelIds.forEach(id => {
+                        addModelTag(id, '');  // 映射名称保持为空
+                    });
+                }
+            })
+            .catch(error => {
+                // 恢复按钮状态
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+                alert(`获取模型列表失败: ${error.message}`);
+            });
+        }
+    </script>
+</body>
+</html> 
