@@ -631,217 +631,99 @@ async def get_api_key_from_request(request: Request):
             detail="认证格式错误。请使用'Authorization: Bearer YOUR_API_KEY'格式"
         )
 
-@app.get("/api/debug/model-mapping/{model}")
-async def debug_model_mapping(model: str, request: Request):
-    """调试模型映射"""
-    await get_api_key_from_request(request)  # 验证API密钥
-    try:
-        config, mapped_model = get_random_config_for_model(model)
-        return {
-            "model": model,
-            "mapped_model": mapped_model,
-            "config": {
-                "id": config.get("id"),
-                "base_url": config.get("base_url"),
-            }
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/debug/forward")
-async def debug_forward(request: Request):
-    """调试转发请求"""
-    await get_api_key_from_request(request)  # 验证API密钥
-    try:
-        # 获取请求内容
-        body = await request.body()
-        body_dict = json.loads(body) if body else {}
-        
-        # 获取模型名称和目标URL
-        model = body_dict.get("model", "")
-        target_url = body_dict.get("target_url", "")
-        
-        if not model or not target_url:
-            return {
-                "error": "缺少必要参数",
-                "message": "请提供model和target_url参数"
-            }
-        
-        # 随机选择配置，并获取实际模型名称
-        config, actual_model = get_random_config_for_model(model)
-        
-        # 如果实际模型名称与请求的不同，替换请求中的模型名称
-        if actual_model != model:
-            body_dict["model"] = actual_model
-            body = json.dumps(body_dict).encode()
-        
-        # 准备转发
-        headers = dict(request.headers)
-        headers.pop("host", None)
-        
-        # 移除所有形式的authorization头（不区分大小写）
-        auth_headers = [k for k in headers.keys() if k.lower() == "authorization"]
-        for key in auth_headers:
-            headers.pop(key)
-        
-        # 更新Content-Length头以匹配新的请求体长度
-        content_length_headers = [k for k in headers.keys() if k.lower() == "content-length"]
-        for key in content_length_headers:
-            headers.pop(key)
-        
-        # 添加新的Content-Length头
-        if body:
-            headers["Content-Length"] = str(len(body))
-        
-        # 添加正确的Authorization头
-        headers["Authorization"] = f"Bearer {config['api_key']}"
-        
-        # 发送请求
-        async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
-            response = await client.post(
-                target_url,
-                headers=headers,
-                content=body
-            )
-            
-            # 返回详细信息
-            return {
-                "request": {
-                    "url": target_url,
-                    "headers": {k: v for k, v in headers.items() if k.lower() != "authorization"},
-                    "body_length": len(body) if body else 0,
-                    "body_preview": str(body[:200]) + "..." if body and len(body) > 200 else str(body)
-                },
-                "response": {
-                    "status_code": response.status_code,
-                    "headers": dict(response.headers),
-                    "body_length": len(response.content),
-                    "body_preview": str(response.content[:200]) + "..." if len(response.content) > 200 else str(response.content)
-                },
-                "mapping": {
-                    "original_model": model,
-                    "actual_model": actual_model,
-                    "config_id": config.get("id", "unknown")
-                }
-            }
-    except Exception as e:
-        logger.error(f"调试转发时出错: {str(e)}", exc_info=True)
-        return {
-            "error": "调试转发时出错",
-            "message": str(e)
-        }
-
-@app.post("/api/debug/stream")
-async def debug_stream(request: Request):
-    """调试流式请求"""
-    await get_api_key_from_request(request)  # 验证API密钥
-    try:
-        # 获取请求内容
-        body = await request.body()
-        body_dict = json.loads(body) if body else {}
-        
-        # 确保请求中包含stream=True
-        body_dict["stream"] = True
-        
-        # 获取模型名称和目标URL
-        model = body_dict.get("model", "")
-        target_url = body_dict.get("target_url", "")
-        
-        if not model or not target_url:
-            return {
-                "error": "缺少必要参数",
-                "message": "请提供model和target_url参数"
-            }
-        
-        # 随机选择配置，并获取实际模型名称
-        config, actual_model = get_random_config_for_model(model)
-        
-        # 如果实际模型名称与请求的不同，替换请求中的模型名称
-        if actual_model != model:
-            body_dict["model"] = actual_model
-        
-        # 重新编码请求体
-        body = json.dumps(body_dict).encode()
-        
-        # 准备转发
-        headers = dict(request.headers)
-        headers.pop("host", None)
-        
-        # 移除所有形式的authorization头（不区分大小写）
-        auth_headers = [k for k in headers.keys() if k.lower() == "authorization"]
-        for key in auth_headers:
-            headers.pop(key)
-        
-        # 更新Content-Length头以匹配新的请求体长度
-        content_length_headers = [k for k in headers.keys() if k.lower() == "content-length"]
-        for key in content_length_headers:
-            headers.pop(key)
-        
-        # 添加新的Content-Length头
-        headers["Content-Length"] = str(len(body))
-        
-        # 添加正确的Authorization头
-        headers["Authorization"] = f"Bearer {config['api_key']}"
-        
-        # 设置正确的Content-Type
-        headers["Content-Type"] = "application/json"
-        
-        async def stream_generator():
-            client = httpx.AsyncClient(follow_redirects=True, timeout=TIMEOUT_SECONDS)
-            try:
-                async with client.stream(
-                    "POST",
-                    target_url,
-                    headers=headers,
-                    json=body_dict
-                ) as response:
-                    # 检查状态码
-                    if not response.is_success:
-                        error_content = await response.read()
-                        yield error_content
-                        return
-                    
-                    # 直接逐块读取和输出内容
-                    async for chunk in response.aiter_bytes():
-                        if chunk:
-                            yield chunk
-            except Exception as e:
-                logger.error(f"流式测试出错: {str(e)}")
-                yield f"data: {{\"error\":\"流式测试出错: {str(e)}\"}}\n\n".encode()
-            finally:
-                await client.aclose()
-        
-        # 返回流式响应
-        return StreamingResponse(
-            stream_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Content-Type": "text/event-stream"
-            }
-        )
-    except Exception as e:
-        logger.error(f"流式测试出错: {str(e)}")
-        return JSONResponse(
-            content={"error": "流式测试出错", "message": str(e)},
-            status_code=500
-        )
-
-# 流式响应包装器
-async def stream_with_logging(stream):
-    """包装流式响应，添加日志记录"""
-    chunk_count = 0
-    total_bytes = 0
-    
-    try:
-        async for chunk in stream:
-            chunk_count += 1
-            total_bytes += len(chunk)
-            if chunk_count % 10 == 0:  # 每10个块记录一次日志，避免日志过多
-                logger.info(f"已传输 {chunk_count} 个块，共 {total_bytes} 字节")
-            yield chunk
-        
-        logger.info(f"流式传输完成，共 {chunk_count} 个块，{total_bytes} 字节")
-    except Exception as e:
-        logger.error(f"流式传输出错: {str(e)}", exc_info=True)
-        raise
+#
+# @app.post("/api/debug/stream")
+# async def debug_stream(request: Request):
+#     """调试流式请求"""
+#     await get_api_key_from_request(request)  # 验证API密钥
+#     try:
+#         # 获取请求内容
+#         body = await request.body()
+#         body_dict = json.loads(body) if body else {}
+#
+#         # 确保请求中包含stream=True
+#         body_dict["stream"] = True
+#
+#         # 获取模型名称和目标URL
+#         model = body_dict.get("model", "")
+#         target_url = body_dict.get("target_url", "")
+#
+#         if not model or not target_url:
+#             return {
+#                 "error": "缺少必要参数",
+#                 "message": "请提供model和target_url参数"
+#             }
+#
+#         # 随机选择配置，并获取实际模型名称
+#         config, actual_model = get_random_config_for_model(model)
+#
+#         # 如果实际模型名称与请求的不同，替换请求中的模型名称
+#         if actual_model != model:
+#             body_dict["model"] = actual_model
+#
+#         # 重新编码请求体
+#         body = json.dumps(body_dict).encode()
+#
+#         # 准备转发
+#         headers = dict(request.headers)
+#         headers.pop("host", None)
+#
+#         # 移除所有形式的authorization头（不区分大小写）
+#         auth_headers = [k for k in headers.keys() if k.lower() == "authorization"]
+#         for key in auth_headers:
+#             headers.pop(key)
+#
+#         # 更新Content-Length头以匹配新的请求体长度
+#         content_length_headers = [k for k in headers.keys() if k.lower() == "content-length"]
+#         for key in content_length_headers:
+#             headers.pop(key)
+#
+#         # 添加新的Content-Length头
+#         headers["Content-Length"] = str(len(body))
+#
+#         # 添加正确的Authorization头
+#         headers["Authorization"] = f"Bearer {config['api_key']}"
+#
+#         # 设置正确的Content-Type
+#         headers["Content-Type"] = "application/json"
+#
+#         async def stream_generator():
+#             client = httpx.AsyncClient(follow_redirects=True, timeout=TIMEOUT_SECONDS)
+#             try:
+#                 async with client.stream(
+#                     "POST",
+#                     target_url,
+#                     headers=headers,
+#                     json=body_dict
+#                 ) as response:
+#                     # 检查状态码
+#                     if not response.is_success:
+#                         error_content = await response.read()
+#                         yield error_content
+#                         return
+#
+#                     # 直接逐块读取和输出内容
+#                     async for chunk in response.aiter_bytes():
+#                         if chunk:
+#                             yield chunk
+#             except Exception as e:
+#                 logger.error(f"流式测试出错: {str(e)}")
+#                 yield f"data: {{\"error\":\"流式测试出错: {str(e)}\"}}\n\n".encode()
+#             finally:
+#                 await client.aclose()
+#
+#         # 返回流式响应
+#         return StreamingResponse(
+#             stream_generator(),
+#             media_type="text/event-stream",
+#             headers={
+#                 "Cache-Control": "no-cache",
+#                 "Content-Type": "text/event-stream"
+#             }
+#         )
+#     except Exception as e:
+#         logger.error(f"流式测试出错: {str(e)}")
+#         return JSONResponse(
+#             content={"error": "流式测试出错", "message": str(e)},
+#             status_code=500
+#         )
