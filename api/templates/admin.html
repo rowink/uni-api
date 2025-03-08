@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>UniAPI - LLM Stream Optimizer</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
     <style>
         :root {
@@ -296,7 +297,7 @@
                                         </div>
                                     </div>
                                     <div class="mb-4">
-                                        <label for="models" class="form-label">支持的模型</label>
+                                        <label for="models" class="form-label">支持的模型 <i class="bi bi-arrow-clockwise text-primary" id="refreshModelsBtn" style="cursor: pointer; font-size: 0.9rem;" title="从API获取模型列表"></i></label>
                                         <div class="input-group mb-2">
                                             <input type="text" class="form-control" id="modelInput" placeholder="模型名称">
                                             <input type="text" class="form-control" id="modelMappingInput" placeholder="映射名称 (可选)">
@@ -305,7 +306,7 @@
                                         <div id="modelTags" class="d-flex flex-wrap gap-1 mt-2"></div>
                                         <input type="hidden" id="models" required>
                                         <input type="hidden" id="modelMappings">
-                                        <div class="form-text">添加此API配置支持的实际模型名称。如果需要，可以为每个模型设置映射名称，这样就可以用映射名称代替实际模型名称发起请求。</div>
+                                        <div class="form-text">添加此API配置支持的实际模型名称。如果需要，可以为每个模型设置映射名称，这样就可以用映射名称代替实际模型名称发起请求。点击刷新图标可自动从API获取可用模型列表。</div>
                                     </div>
                                     <button type="submit" class="btn btn-primary w-100">添加配置</button>
                                 </form>
@@ -450,6 +451,9 @@
             setupApiKeyInput();
             setupFormSubmission();
             setupTabListeners();
+            
+            // 添加刷新模型按钮事件
+            document.getElementById('refreshModelsBtn').addEventListener('click', fetchModelsList);
             
             // 加载初始配置
             loadConfigs();
@@ -1039,6 +1043,81 @@
             baseUrlInput.addEventListener('input', () => updateUrlPreview(baseUrlInput, urlPreview));
             editBaseUrlInput.addEventListener('input', () => updateUrlPreview(editBaseUrlInput, editUrlPreview));
         });
+
+        // 添加自动获取模型列表功能
+        function fetchModelsList() {
+            const baseUrl = document.getElementById('baseUrl').value.trim();
+            
+            if (!baseUrl) {
+                alert('请先输入Base URL');
+                return;
+            }
+            
+            let modelEndpoint = baseUrl;
+            if (baseUrl.endsWith('#')) {
+                modelEndpoint = baseUrl.slice(0, -1) + '/v1/models';
+            } else if (baseUrl.endsWith('/')) {
+                modelEndpoint = baseUrl + 'v1/models';
+            } else {
+                modelEndpoint = baseUrl + '/v1/models';
+            }
+            
+            // 提示用户正在获取
+            const btn = document.getElementById('refreshModelsBtn');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> 获取中...';
+            btn.disabled = true;
+            
+            // 获取API密钥进行验证
+            let apiKey = '';
+            const apiKeysValue = document.getElementById('apiKeys').value;
+            if (apiKeysValue) {
+                apiKey = apiKeysValue.split(',')[0];
+            }
+            
+            fetch(modelEndpoint, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': apiKey ? `Bearer ${apiKey}` : ''
+                }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`API请求失败: ${response.status} ${response.statusText}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                // 恢复按钮状态
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+                
+                if (!data.data || !Array.isArray(data.data) || data.data.length === 0) {
+                    alert('未找到可用模型');
+                    return;
+                }
+                
+                // 获取模型ID列表
+                const modelIds = data.data.map(model => model.id);
+                
+                // 确认对话框
+                const confirmed = confirm(`发现 ${modelIds.length} 个模型:\n\n${modelIds.join('\n')}\n\n是否自动添加这些模型?`);
+                
+                if (confirmed) {
+                    // 为每个模型ID添加标签
+                    modelIds.forEach(id => {
+                        addModelTag(id, '');  // 映射名称保持为空
+                    });
+                }
+            })
+            .catch(error => {
+                // 恢复按钮状态
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+                alert(`获取模型列表失败: ${error.message}`);
+            });
+        }
     </script>
 </body>
 </html> 
