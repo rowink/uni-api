@@ -24,7 +24,8 @@ UniAPI是一个兼容OpenAI协议的API转发器，允许用户管理多个API�
 - 支持OpenAI API和兼容OpenAI协议的其他服务 (如Azure OpenAI, Claude API等)
 - 自定义API密钥、Base URL和模型列表
 - 支持模型映射，可以使用统一的模型名称映射到不同厂商的实际模型
-- 请求时根据模型自动随机选择API密钥
+- 请求时根据模型成功率及首tokenRT自动择优
+- 模型连续不可用自动冷却
 - 支持流式和非流式输出
 - 标准Bearer Token认证，与OpenAI API完全兼容
 - 在Vercel上轻松部署
