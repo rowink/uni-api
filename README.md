@@ -47,7 +47,7 @@ UniAPI是一个兼容OpenAI协议的API转发器，允许用户管理多个API�
 Authorization: Bearer your_api_key
 ```
 
-您可以通过环境变量`TEMP_API_KEY_ONE`到`API_KEY_5`配置最多5个允许的API密钥，这些密钥可以用于调用API但不能访问管理面板。
+您可以通过环境变量`TEMP_API_KEY_ONE`和`TEMP_API_KEY`配置最多2个额外的API密钥，这些密钥可以用于调用API但不能访问管理面板。
 管理员API密钥可以通过环境变量`ADMIN_API_KEY`设置，默认值为`adminadmin`。
 
 ## API使用说明
