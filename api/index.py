@@ -945,6 +945,7 @@ def filter_valid_config_model_pairs(config_model_pairs, model_request_map):
             # 断路器机制，记录失败次数，如果连续失败次数达到阈值，就进行降级处理
             recent_fail_count = count_recent_consecutive_failures(_model_request_history)
             if recent_fail_count > 2:
+                # 理论上不会拿到兜底的值，因为只存了最近72小时的记录，按照断路时间算是拿不到的
                 cooldown_seconds = fail_count_to_cooldown.get(recent_fail_count, 24 * 60 * 60)
                 if time.time() - _model_request_history[-1].request_time / 1000 > cooldown_seconds:
                     # 如果已经冷却了，就直接加进去
