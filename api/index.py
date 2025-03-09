@@ -948,7 +948,7 @@ def filter_valid_config_model_pairs(config_model_pairs, model_request_map):
             if recent_fail_count > 2:
                 # 理论上不会拿到兜底的值，因为只存了最近72小时的记录，按照断路时间算是拿不到的
                 cooldown_seconds = fail_count_to_cooldown.get(recent_fail_count, 24 * 60 * 60)
-                if time.time() - _model_request_history[-1].request_time / 1000 > cooldown_seconds:
+                if time.time() - _model_request_history[0].request_time / 1000 > cooldown_seconds:
                     # 如果已经冷却了，就直接加进去
                     valid_config_model_pairs.append((config, actual_model))
                 else:
