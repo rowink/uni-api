@@ -7,7 +7,7 @@ UniAPI是一个兼容OpenAI协议的API转发器，允许用户管理多个API�
 ![image](https://github.com/user-attachments/assets/297461f8-1d4a-40ab-9e36-ae7a1da3dae7)
 ### 配置列表
 ![image](https://github.com/user-attachments/assets/bb9d3bef-da29-467f-b722-2287aa570c08)
-### vercal环境变量
+### vercel环境变量
 ![image](https://github.com/user-attachments/assets/6e9fc577-e8c2-4693-a677-614b7328b0ed)
 
 
