@@ -546,7 +546,7 @@ async def record_model_request(model_key, request_record, history_records):
             if redis_client:
                 # 将记录转换为JSON并保存到Redis
                 serialized_records = json.dumps([record.dict() for record in filtered_records])
-                await redis_client.set(model_key, serialized_records, ex=int(max_age / 1000))
+                redis_client.set(model_key, serialized_records, ex=int(max_age / 1000))
                 logger.debug(f"模型请求记录已保存到Redis: {model_key}")
             else:
                 # 如果没有Redis，则保存到内存中
@@ -889,8 +889,9 @@ def batch_get_model_request_record(model_key_list):
             try:
                 # 对于同步Redis客户端
                 records_json_list = redis_client.mget(final_key_list)
-            except Exception:
+            except Exception as e:
                 # 如果Redis客户端是异步的，则需要在外部处理
+                logger.warning(f"从redis获取模型请求历史记录时出错: {str(e)}")
                 pass
 
             if records_json_list and len(records_json_list) == len(final_key_list):
