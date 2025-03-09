@@ -1,23 +1,27 @@
+import copy
+import hashlib
+import json
+import logging
+import os
+import pathlib
+import random
+import time
 import uuid
+from collections import deque
+from datetime import datetime
+from typing import List, Dict, Optional
 
-from fastapi import FastAPI, Request, Response, HTTPException, Depends, Header, Security, status, Form
+import httpx
+import redis
+from fastapi import FastAPI, Request, HTTPException, Depends, Security, status, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse, HTMLResponse, RedirectResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-import httpx
-import json
-import random
 from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Optional, Union
-import os
-import redis
-from datetime import datetime
-import pathlib
-import copy
-import logging
-import asyncio
+
+UNKNOWN = 'unknown'
 
 # 配置日志
 logging.basicConfig(
@@ -51,6 +55,9 @@ security = HTTPBearer(auto_error=False)
 
 # 从环境变量获取允许的API密钥
 ALLOWED_API_KEYS = []
+
+# 全局内存存储（当Redis不可用时使用）
+model_request_history = {}
 
 # 获取管理员API密钥
 ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "adminadmin")
@@ -136,8 +143,9 @@ async def verify_admin_api_key(credentials: HTTPAuthorizationCredentials = Secur
 # 初始化Redis客户端
 redis_url = os.getenv("REDIS_URL")
 if redis_client := redis.from_url(redis_url) if redis_url else None:
-    pass
+    logger.info("Redis连接已配置")
 else:
+    logger.warning("Redis未配置，使用内存存储")
     # 使用内存存储作为备用
     in_memory_db = {
         "api_configs": [],
@@ -355,18 +363,22 @@ async def delete_model_mapping(unified_name: str, api_key: str = Depends(get_adm
     return {"message": f"模型映射已删除: {unified_name}"}
 
 
-# 获取指定模型的随机配置
-def get_random_config_for_model(model: str):
+def get_config_model_pairs(model: str):
+    """
+    查找有当前模型的配置，找不到的话，抛异常
+    :param model:
+    :return:
+    """
+
     logger.info(f"查找模型配置: {model}")
 
     if redis_client:
         configs = json.loads(redis_client.get("api_configs") or "[]")
-        mappings = json.loads(redis_client.get("model_mappings") or "{}")
     else:
         configs = in_memory_db["api_configs"]
         mappings = in_memory_db.get("model_mappings", {})
 
-    logger.info(f"加载了 {len(configs)} 个配置和 {len(mappings)} 个全局映射")
+    logger.info(f"加载了 {len(configs)} 个配置")
 
     # 首先，检查是否有配置直接包含该模型的映射
     configs_with_direct_mapping = []
@@ -378,34 +390,11 @@ def get_random_config_for_model(model: str):
             # 确保配置支持实际模型
             if actual_model in config["models"]:
                 configs_with_direct_mapping.append((config, actual_model))
-                logger.info(f"找到配置内映射: {model} -> {actual_model} (配置ID: {config.get('id', 'unknown')})")
+                logger.info(f"找到配置内映射: {model} -> {actual_model} (配置ID: {config.get('id', UNKNOWN)})")
 
-    # 如果找到了直接映射的配置，随机选择一个
+    # 如果找到了映射的配置，返回映射的配置
     if configs_with_direct_mapping:
-        selected = random.choice(configs_with_direct_mapping)
-        logger.info(f"使用配置内映射: {model} -> {selected[1]} (配置ID: {selected[0].get('id', 'unknown')})")
-        return selected
-
-    # 其次，检查全局模型映射
-    if model in mappings:
-        logger.info(f"找到全局映射: {model} -> {mappings[model]}")
-        # 为每个可用的厂商找到可用的配置
-        vendor_configs = []
-        for vendor, vendor_model in mappings[model].items():
-            # 找到该厂商的配置，并且该配置支持该模型
-            matching_vendor_configs = [
-                c for c in configs
-                if c.get("vendor") == vendor and vendor_model in c["models"]
-            ]
-            for config in matching_vendor_configs:
-                vendor_configs.append((config, vendor_model))
-                logger.info(f"找到厂商映射: {vendor} -> {vendor_model} (配置ID: {config.get('id', 'unknown')})")
-
-        if vendor_configs:
-            # 随机选择一个配置和对应的模型
-            selected = random.choice(vendor_configs)
-            logger.info(f"使用厂商映射: {model} -> {selected[1]} (配置ID: {selected[0].get('id', 'unknown')})")
-            return selected
+        return configs_with_direct_mapping
 
     # 最后，查找直接支持该模型的配置
     matching_configs = [(c, model) for c in configs if model in c["models"]]
@@ -413,9 +402,7 @@ def get_random_config_for_model(model: str):
         logger.warning(f"没有找到支持模型 {model} 的配置")
         raise HTTPException(status_code=404, detail=f"没有找到支持模型 {model} 的配置")
 
-    selected = random.choice(matching_configs)
-    logger.info(f"使用直接匹配: {model} (配置ID: {selected[0].get('id', 'unknown')})")
-    return selected
+    return matching_configs
 
 
 # 获取所有可用模型列表的端点
@@ -505,10 +492,65 @@ async def list_available_models(request: Request):
 
 
 # OpenAI兼容端点 - 仅代理chat/completions
-async def record_model_request(model_name, request_record, history_records):
-    # 将当前的记录保存到tair或内存中去
+async def record_model_request(model_key, request_record, history_records):
+    """
+    记录模型请求数据，并将其与历史记录合并保存到Redis或内存中
+    
+    该函数维护了每个模型的请求历史记录，以便于后续基于性能指标进行模型选择。
+    
+    Args:
+        model_key (str): 模型key，用作Redis键
+        request_record (ModelRequestRecord): 当前请求的记录对象，包含请求ID、时间、成功状态等
+        history_records (Deque[ModelRequestRecord]): 历史请求记录列表，如果为None则创建新列表
+    
+    Returns:
+        Deque[ModelRequestRecord]: 更新后的历史记录列表
+    
+    记录会保留最多50条记录，且只保留72小时内的记录。
+    这些数据用于后续模型选择时进行权重偏移计算，成功率高、响应快的模型会获得更高权重。
+    """
+    try:
+        current_time = int(time.time() * 1000)  # 当前时间（毫秒）
+        max_age = 72 * 60 * 60 * 1000  # 72小时（毫秒）
+        max_records = 50  # 最大记录数
 
-    pass
+        # 如果历史记录为空，则初始化为空列表
+        if history_records is None:
+            history_records = deque()
+
+        # 添加当前记录到历史记录
+        if request_record:
+            history_records.appendleft(request_record)
+
+        # 过滤掉超过72小时的记录
+        filtered_records = deque(record for record in history_records
+            if (current_time - record.request_time) <= max_age)
+
+        while len(filtered_records) > max_records:
+            filtered_records.pop()
+
+
+        # 尝试使用Redis保存（如果有配置）
+        try:
+            if redis_client:
+                # 将记录转换为JSON并保存到Redis
+                serialized_records = json.dumps([record.dict() for record in filtered_records])
+                await redis_client.set(model_key, serialized_records, ex=int(max_age / 1000))
+                logger.debug(f"模型请求记录已保存到Redis: {model_key}")
+            else:
+                # 如果没有Redis，则保存到内存中
+                model_request_history[model_key] = filtered_records
+                logger.debug(f"模型请求记录已保存到内存: {model_key}")
+        except Exception as e:
+            logger.warning(f"保存模型请求记录时出错: {str(e)}")
+            # 出错时保存到内存
+            model_request_history[model_key] = filtered_records
+
+        return filtered_records
+    except Exception as e:
+        logger.error(f"记录模型请求时出错: {str(e)}", exc_info=True)
+        # 出错时返回原始历史记录
+        return history_records
 
 
 @app.api_route("/v1/chat/completions", methods=["GET", "POST", "PUT", "DELETE"])
@@ -563,8 +605,17 @@ async def openai_proxy(request: Request):
     logger.info(f"收到API请求: 路径=/v1/chat/completions, 模型={model}")
 
     try:
-        # 随机选择配置，并获取实际模型名称
-        config, actual_model = get_random_config_for_model(model)
+        # 首先过滤出包含了当前模型的配置列表
+        config_model_pairs = get_config_model_pairs(model)
+        config_model_key_list = []
+        for config, actual_model in config_model_pairs:
+            config_model_key_list.append(build_model_request_record_key(config.get("id", UNKNOWN), actual_model))
+
+        # 查询这些模型的请求历史
+        model_request_map = batch_get_model_request_record(config_model_key_list)
+
+        config, actual_model = weighted_choice(config_model_pairs, model_request_map)
+
         logger.info(f"选择配置: ID={config.get('id', 'unknown')}, 实际模型={actual_model}")
 
         # 如果实际模型名称与请求的不同，替换请求中的模型名称
@@ -572,6 +623,9 @@ async def openai_proxy(request: Request):
             logger.info(f"模型映射: {model} -> {actual_model}")
             body_dict["model"] = actual_model
             body = json.dumps(body_dict).encode()
+
+        model_request_key = build_model_request_record_key(config.get("id", UNKNOWN), actual_model)
+        current_request_history = model_request_map.get(model_request_key)
 
         # 准备转发
         headers = dict(request.headers)
@@ -614,13 +668,15 @@ async def openai_proxy(request: Request):
         if is_stream:
             async def stream_generator():
                 client = httpx.AsyncClient(follow_redirects=True, timeout=TIMEOUT_SECONDS)
-                request_start_time = int(datetime.now().timestamp() * 1000)
+                request_start_time = int(time.time() * 1000)
                 first_token = False
 
                 # ModelRequestRecord构建
                 request_record = ModelRequestRecord(
                     request_time=request_start_time,
                     request_id=str(uuid.uuid4()),
+                    first_token_rt=-1,
+                    request_success=False,
                     is_streaming=is_stream,
                     request_type="chat",
                 )
@@ -648,13 +704,13 @@ async def openai_proxy(request: Request):
                                 yield chunk
                 except Exception as e:
                     logger.error(f"流式处理出错: {str(e)}")
-                    request_record.request_success = False
-                    if not request_record.first_token_rt:
-                        request_record.first_token_rt = -1
                     yield f"data: {{\"error\":\"流式处理出错: {str(e)}\"}}\n\n".encode()
                 finally:
-                    request_record.request_success = True
-                    await record_model_request(actual_model, request_record, [])
+                    request_record.request_success = True if first_token else False
+                    if not first_token:
+                        request_record.first_token_rt = -1
+
+                    await record_model_request(model_request_key, request_record, current_request_history)
                     await client.aclose()
 
             # 返回流式响应
@@ -780,3 +836,181 @@ async def get_api_key_from_request(request: Request):
             status_code=401,
             detail="认证格式错误。请使用'Authorization: Bearer YOUR_API_KEY'格式"
         )
+
+
+def build_model_request_record_key(config_id, model_name):
+    """
+    构建模型的唯一key，每个配置下的模型视为唯一
+    :param config_id: 配置id
+    :param model_name: 模型名
+    :return:
+    """
+    model_key = build_model_key(config_id, model_name)
+    return f"request_r_{model_key}"
+
+def build_model_key(config_id, model_name):
+    """
+    构建模型的唯一key，每个配置下的模型视为唯一
+    :param config_id: 配置id
+    :param model_name: 模型名
+    :return:
+    """
+    key = f"{config_id}-{model_name}"
+    return hashlib.md5(key.encode()).hexdigest()
+
+
+def batch_get_model_request_record(model_key_list):
+    """
+    批量获取模型的请求记录列表
+    :param model_key_list:
+    :return:
+    """
+    try:
+        # 构建key列表
+        final_key_list = model_key_list
+
+        result = {}
+
+        if redis_client:
+            # 由于这是在同步函数中，我们不能直接使用await
+            records_json_list = []
+            try:
+                # 对于同步Redis客户端
+                records_json_list = redis_client.mget(final_key_list)
+            except Exception:
+                # 如果Redis客户端是异步的，则需要在外部处理
+                pass
+
+            if records_json_list and len(records_json_list) == len(final_key_list):
+                # 反序列化记录
+                for i in range(len(final_key_list)):
+                    model_key = final_key_list[i]
+                    records_json = records_json_list[i]
+                    if not records_json:
+                        continue
+                    records_data = json.loads(records_json)
+                    history_records = deque(ModelRequestRecord(**record) for record in records_data)
+                    result[model_key] = history_records
+
+        else:
+            for final_key in final_key_list:
+                history_records = model_request_history.get(final_key)
+                result[final_key] = history_records
+
+        return result
+    except Exception as e:
+        logger.warning(f"获取模型请求历史记录时出错: {str(e)}")
+        return {}
+
+
+def filter_valid_config_model_pairs(config_model_pairs, model_request_map):
+    if not config_model_pairs or len(config_model_pairs) == 0:
+        return []
+
+    if not model_request_map or len(model_request_map) == 0:
+        return config_model_pairs
+
+    # todo 后续实现，自动降级机制，如果模型最近的请求连续失败x次，降级一段时间
+    valid_config_model_pairs = []
+    for config, actual_model in config_model_pairs:
+        key = build_model_request_record_key(config.get("id", UNKNOWN), actual_model)
+        _model_request_history = model_request_map.get(key)
+        if _model_request_history:
+            # model_request_history = model_request_history.copy()
+            # # 过去1分钟内，有3次及以上失败次数，认为模型不可用
+            # if len(model_request_history) >= 3 and len(
+            #     record.request_time > int(time.time() * 1000) - 60 * 1000
+            #     and not record.request_success
+            #     for record in model_request_history
+            # ) >= 3:
+            #     logger.info(f"模型{actual_model}不可用，已跳过")
+            #     continue
+            # else:
+            valid_config_model_pairs.append((config, actual_model))
+        else:
+            # 没有调用历史，可以直接加进去
+            valid_config_model_pairs.append((config, actual_model))
+
+    # 如果全都过滤完了，就都加回来重选
+    if not valid_config_model_pairs or len(valid_config_model_pairs) == 0:
+        valid_config_model_pairs = config_model_pairs
+
+    return valid_config_model_pairs
+
+
+# 基于历史请求数据的权重选择算法
+def weighted_choice(config_model_pairs, model_request_map):
+    """
+    基于历史请求数据的权重选择算法，用于智能选择最优的API配置和模型
+    
+    该算法考虑了历史请求的成功率和首字符响应时间，为性能更好的模型赋予更高的选择权重。
+    具体权重计算方式：
+    1. 基础权重为1.0
+    2. 如果有历史数据，则：
+       - 计算成功率权重 = 成功请求数 / 总请求数
+       - 对于成功的请求，计算响应时间权重 = 基准时间(2000ms) / 平均首字符响应时间
+       - 综合权重 = 成功率权重 * 响应时间权重
+    3. 确保最小权重为0.1，避免模型被完全排除
+    4. 归一化所有权重并进行加权随机选择
+    
+    Args:
+        config_model_pairs (List[Tuple[Dict, str]]): 配置和模型名称的元组列表 [(config, model_name), ...]
+        model_request_map (Dict[str, List[ModelRequestRecord]): 模型的最近请求记录
+    
+    Returns:
+        Tuple[Dict, str]: 选择的配置和模型名称元组 (config, model_name)
+    """
+    if not config_model_pairs:
+        return None
+
+    valid_config_model_pairs = filter_valid_config_model_pairs(config_model_pairs, model_request_map)
+
+    # 如果只有一个选项，直接返回
+    if len(valid_config_model_pairs) == 1:
+        return valid_config_model_pairs[0]
+
+    # 为每个配置计算权重
+    weights = []
+
+    for config, model_name in valid_config_model_pairs:
+        # 默认权重为1.0
+        weight = 1.0
+        key = build_model_request_record_key(config.get("id", UNKNOWN), model_name)
+
+        # 尝试获取历史请求数据
+        history_records = model_request_map.get(key)
+
+        if history_records and len(history_records) > 0:
+            # 计算成功率
+            success_count = sum(1 for r in history_records if r.request_success)
+            success_rate = success_count / len(history_records)
+
+            # 计算平均首字符响应时间（仅考虑成功地请求）
+            successful_requests = [r for r in history_records if r.request_success and r.first_token_rt > 0]
+            if successful_requests:
+                avg_first_token_time = sum(r.first_token_rt for r in successful_requests) / len(successful_requests)
+
+                # 响应时间归一化：使用一个合理的基准时间（例如200毫秒）进行归一化
+                response_time_weight = 200 / max(avg_first_token_time, 100)  # 避免除以非常小的值
+
+                # 成功率权重：直接使用成功率
+                success_weight = success_rate
+
+                # 综合权重：响应时间权重 * 成功率权重
+                weight = response_time_weight * success_weight
+
+                logger.debug(
+                    f"模型 {model_name} 权重计算: 成功率={success_rate:.2f}, 平均响应={avg_first_token_time:.0f}ms, 权重={weight:.4f}")
+            else:
+                # 没有成功请求的记录，仅使用成功率
+                weight = success_rate
+                logger.debug(f"模型 {model_name} 权重计算: 成功率={success_rate:.2f}, 权重={weight:.4f}")
+
+        weights.append(max(weight, 0.1))  # 确保权重至少为0.1
+
+    # 归一化权重
+    total_weight = sum(weights)
+    normalized_weights = [w / total_weight for w in weights]
+
+    # 根据权重进行随机选择
+    return random.choices(valid_config_model_pairs, weights=normalized_weights, k=1)[0]
