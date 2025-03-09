@@ -35,6 +35,18 @@ BASE_DIR = pathlib.Path(__file__).parent.resolve()
 
 app = FastAPI(title="UniAPI - OpenAI API转发器")
 
+# 断路器规则，连续失败的次数，对应降级的时间，如果某个模型连续失败达到指定次数
+# 会在最近的一次请求之后的x分钟内，直接降级，不再发起请求
+fail_count_to_cooldown = {
+    3: 5 * 60,  # 3次连续失败 -> 5分钟断路
+    4: 10 * 60,  # 4次连续失败 -> 10分钟断路
+    5: 30 * 60,  # 5次连续失败 -> 30分钟断路
+    6: 2 * 60 * 60,  # 6次连续失败 -> 2小时断路
+    7: 6 * 60 * 60,  # 7次连续失败 -> 6小时断路
+    8: 24 * 60 * 60,  # 8次连续失败 -> 24小时断路
+    9: 48 * 60 * 60,  # 9次连续失败 -> 48小时断路
+}
+
 # 添加CORS中间件
 app.add_middleware(
     CORSMiddleware,
@@ -524,11 +536,10 @@ async def record_model_request(model_key, request_record, history_records):
 
         # 过滤掉超过72小时的记录
         filtered_records = deque(record for record in history_records
-            if (current_time - record.request_time) <= max_age)
+                                 if (current_time - record.request_time) <= max_age)
 
         while len(filtered_records) > max_records:
             filtered_records.pop()
-
 
         # 尝试使用Redis保存（如果有配置）
         try:
@@ -848,6 +859,7 @@ def build_model_request_record_key(config_id, model_name):
     model_key = build_model_key(config_id, model_name)
     return f"request_r_{model_key}"
 
+
 def build_model_key(config_id, model_name):
     """
     构建模型的唯一key，每个配置下的模型视为唯一
@@ -903,6 +915,21 @@ def batch_get_model_request_record(model_key_list):
         return {}
 
 
+def count_recent_consecutive_failures(request_record_history):
+    """
+    计算最近连续失败的次数，注意，外部需要保证传入的历史是按照从近到远排序的
+    :param request_record_history:
+    :return:
+    """
+    failure_count = 0
+    for record in request_record_history:
+        if not record.request_success:
+            failure_count += 1
+        else:
+            break
+    return failure_count
+
+
 def filter_valid_config_model_pairs(config_model_pairs, model_request_map):
     if not config_model_pairs or len(config_model_pairs) == 0:
         return []
@@ -910,23 +937,23 @@ def filter_valid_config_model_pairs(config_model_pairs, model_request_map):
     if not model_request_map or len(model_request_map) == 0:
         return config_model_pairs
 
-    # todo 后续实现，自动降级机制，如果模型最近的请求连续失败x次，降级一段时间
     valid_config_model_pairs = []
     for config, actual_model in config_model_pairs:
         key = build_model_request_record_key(config.get("id", UNKNOWN), actual_model)
         _model_request_history = model_request_map.get(key)
         if _model_request_history:
-            # model_request_history = model_request_history.copy()
-            # # 过去1分钟内，有3次及以上失败次数，认为模型不可用
-            # if len(model_request_history) >= 3 and len(
-            #     record.request_time > int(time.time() * 1000) - 60 * 1000
-            #     and not record.request_success
-            #     for record in model_request_history
-            # ) >= 3:
-            #     logger.info(f"模型{actual_model}不可用，已跳过")
-            #     continue
-            # else:
-            valid_config_model_pairs.append((config, actual_model))
+            # 断路器机制，记录失败次数，如果连续失败次数达到阈值，就进行降级处理
+            recent_fail_count = count_recent_consecutive_failures(_model_request_history)
+            if recent_fail_count > 2:
+                cooldown_seconds = fail_count_to_cooldown.get(recent_fail_count, 24 * 60 * 60)
+                if time.time() - _model_request_history[-1].request_time / 1000 > cooldown_seconds:
+                    # 如果已经冷却了，就直接加进去
+                    valid_config_model_pairs.append((config, actual_model))
+                else:
+                    # 如果没有冷却，就忽略
+                    pass
+            else:
+                valid_config_model_pairs.append((config, actual_model))
         else:
             # 没有调用历史，可以直接加进去
             valid_config_model_pairs.append((config, actual_model))
