@@ -379,9 +379,8 @@ def get_config_model_pairs(model: str):
     """
     查找有当前模型的配置，找不到的话，抛异常
     :param model:
-    :return:
+    :return: 返回所有符合条件的配置和模型对
     """
-
     logger.info(f"查找模型配置: {model}")
 
     if redis_client:
@@ -392,29 +391,29 @@ def get_config_model_pairs(model: str):
 
     logger.info(f"加载了 {len(configs)} 个配置")
 
-    # 首先，检查是否有配置直接包含该模型的映射
-    configs_with_direct_mapping = []
+    matching_configs = []
+
+    # 遍历所有配置
     for config in configs:
         # 检查配置中的模型映射
         if config.get("model_mappings") and model in config["model_mappings"]:
-            # 找到了直接映射，使用这个配置
             actual_model = config["model_mappings"][model]
             # 确保配置支持实际模型
             if actual_model in config["models"]:
-                configs_with_direct_mapping.append((config, actual_model))
+                matching_configs.append((config, actual_model))
                 logger.info(f"找到配置内映射: {model} -> {actual_model} (配置ID: {config.get('id', UNKNOWN)})")
+        
+        # 检查是否原生支持该模型
+        if model in config["models"]:
+            matching_configs.append((config, model))
+            logger.info(f"找到原生支持: {model} (配置ID: {config.get('id', UNKNOWN)})")
 
-    # 如果找到了映射的配置，返回映射的配置
-    if configs_with_direct_mapping:
-        return configs_with_direct_mapping
-
-    # 最后，查找直接支持该模型的配置
-    matching_configs = [(c, model) for c in configs if model in c["models"]]
     if not matching_configs:
         logger.warning(f"没有找到支持模型 {model} 的配置")
         raise HTTPException(status_code=404, detail=f"没有找到支持模型 {model} 的配置")
 
     return matching_configs
+
 
 
 # 获取所有可用模型列表的端点
