@@ -1015,26 +1015,20 @@ def weighted_choice(config_model_pairs, model_request_map):
 
             # 计算平均首字符响应时间（仅考虑成功地请求）
             successful_requests = [r for r in history_records if r.request_success and r.first_token_rt > 0]
-            if successful_requests:
-                avg_first_token_time = sum(r.first_token_rt for r in successful_requests) / len(successful_requests)
 
-                # 响应时间归一化：使用一个合理的基准时间（例如200毫秒）进行归一化
-                response_time_weight = 200 / max(avg_first_token_time, 100)  # 避免除以非常小的值
-
-                # 成功率权重：直接使用成功率
-                success_weight = success_rate
-
-                # 综合权重：响应时间权重 * 成功率权重
-                weight = response_time_weight * success_weight
-
-                logger.debug(
-                    f"模型 {model_name} 权重计算: 成功率={success_rate:.2f}, 平均响应={avg_first_token_time:.0f}ms, 权重={weight:.4f}")
+            if not successful_requests:
+                # 有请求，但是没有成功，立刻降低权重，第一次降为0.2，然后递减
+                weight = 0.2 / len(history_records)
             else:
-                # 没有成功请求的记录，仅使用成功率
-                weight = success_rate
-                logger.debug(f"模型 {model_name} 权重计算: 成功率={success_rate:.2f}, 权重={weight:.4f}")
+                avg_first_token_time = sum(r.first_token_rt for r in successful_requests) / len(successful_requests)
+                response_time_factor = 200 / max(avg_first_token_time, 100)
+                # 引入非线性变换强化成功率影响（示例：平方）
+                success_factor = success_rate ** 2
+                weight = response_time_factor * success_factor
+                logger.debug(
+                    f"模型 {model_name} 动态权重: 成功率={success_rate:.2f} 响应={avg_first_token_time:.0f}ms 权重={weight:.4f}")
 
-        weights.append(max(weight, 0.1))  # 确保权重至少为0.1
+        weights.append(weight)
 
     # 归一化权重
     total_weight = sum(weights)
