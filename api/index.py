@@ -20,7 +20,6 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
-from api.models import ModelRequestRecord
 
 UNKNOWN = 'unknown'
 
@@ -187,6 +186,16 @@ class APIConfig(BaseModel):
 class ModelMappingRequest(BaseModel):
     unified_name: str
     vendor_models: Dict[str, str]
+
+
+# 模型请求记录，用于负载均衡分流，包含请求时间，请求结果，首字符生成时间
+class ModelRequestRecord(BaseModel):
+    request_id: str = Field(..., description="请求ID")
+    request_time: int = Field(..., description="请求时间，单位为毫秒")
+    request_success: bool = Field(..., description="请求结果，True 表示成功，False 表示失败")
+    first_token_rt: float = Field(..., description="首字符生成间隔时间，单位为毫秒,失败填写-1")
+    is_streaming: bool = Field(..., description="是否为流式响应，True 表示是，False 表示否")
+    request_type: str = Field(..., description="请求类型，如：chat, embedding等等")
 
 
 # API配置相关端点
@@ -667,17 +676,62 @@ async def openai_proxy(request: Request):
         is_stream = body_dict.get("stream", False)
 
         if is_stream:
-            from api.stream_handler import StreamHandler
-            handler = StreamHandler(
-                request=request,
-                url=url,
-                headers=headers,
-                body=body,
-                timeout_seconds=TIMEOUT_SECONDS,
-                model_request_key=model_request_key,
-                current_request_history=current_request_history
+            async def stream_generator():
+                client = httpx.AsyncClient(follow_redirects=True, timeout=TIMEOUT_SECONDS)
+                request_start_time = int(time.time() * 1000)
+                first_token = False
+
+                # ModelRequestRecord构建
+                request_record = ModelRequestRecord(
+                    request_time=request_start_time,
+                    request_id=str(uuid.uuid4()),
+                    first_token_rt=-1,
+                    request_success=False,
+                    is_streaming=is_stream,
+                    request_type="chat",
+                )
+
+                try:
+                    async with client.stream(
+                            request.method,
+                            url,
+                            headers=headers,
+                            content=body
+                    ) as response:
+                        # 检查状态码
+                        if not response.is_success:
+                            error_content = await response.read()
+                            yield error_content
+                            return
+
+                        # 直接逐块读取和输出内容
+                        async for chunk in response.aiter_bytes():
+                            if not first_token:
+                                first_token_time = int(datetime.now().timestamp() * 1000)
+                                first_token = True
+                                request_record.first_token_rt = first_token_time - request_start_time
+                            if chunk:
+                                yield chunk
+                except Exception as e:
+                    logger.error(f"流式处理出错: {str(e)}")
+                    yield f"data: {{\"error\":\"流式处理出错: {str(e)}\"}}\n\n".encode()
+                finally:
+                    request_record.request_success = True if first_token else False
+                    if not first_token:
+                        request_record.first_token_rt = -1
+
+                    await record_model_request(model_request_key, request_record, current_request_history)
+                    await client.aclose()
+
+            # 返回流式响应
+            return StreamingResponse(
+                stream_generator(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Content-Type": "text/event-stream"
+                }
             )
-            return handler.get_response()
         else:
             # 非流式请求的处理
             async with httpx.AsyncClient(follow_redirects=True, timeout=TIMEOUT_SECONDS) as client:
@@ -961,19 +1015,26 @@ def weighted_choice(config_model_pairs, model_request_map):
 
             # 计算平均首字符响应时间（仅考虑成功地请求）
             successful_requests = [r for r in history_records if r.request_success and r.first_token_rt > 0]
-
-            if not successful_requests:
-                # 有请求，但是没有成功，立刻降低权重，第一次降为0.2，然后递减
-                weight = 0.2 / len(history_records)
-            else:
+            if successful_requests:
                 avg_first_token_time = sum(r.first_token_rt for r in successful_requests) / len(successful_requests)
-                response_time_factor = 200 / max(avg_first_token_time, 100)
-                # 引入非线性变换强化成功率影响（示例：平方）
-                success_factor = success_rate ** 2
-                weight = response_time_factor * success_factor
-                logger.debug(f"模型 {model_name} 动态权重: 成功率={success_rate:.2f} 响应={avg_first_token_time:.0f}ms 权重={weight:.4f}")
 
-        weights.append(weight)
+                # 响应时间归一化：使用一个合理的基准时间（例如200毫秒）进行归一化
+                response_time_weight = 200 / max(avg_first_token_time, 100)  # 避免除以非常小的值
+
+                # 成功率权重：直接使用成功率
+                success_weight = success_rate
+
+                # 综合权重：响应时间权重 * 成功率权重
+                weight = response_time_weight * success_weight
+
+                logger.debug(
+                    f"模型 {model_name} 权重计算: 成功率={success_rate:.2f}, 平均响应={avg_first_token_time:.0f}ms, 权重={weight:.4f}")
+            else:
+                # 没有成功请求的记录，仅使用成功率
+                weight = success_rate
+                logger.debug(f"模型 {model_name} 权重计算: 成功率={success_rate:.2f}, 权重={weight:.4f}")
+
+        weights.append(max(weight, 0.1))  # 确保权重至少为0.1
 
     # 归一化权重
     total_weight = sum(weights)
