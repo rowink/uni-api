@@ -1,11 +1,6 @@
 # UniAPI - OpenAI API转发器
 
-UniAPI是一个兼容OpenAI协议的API转发器，允许用户管理多个API密钥。
-
-模型择优机制：在请求时，会查询可选模型列表过去72小时的成功率及首token RT，选择成功率更高，rt更低的服务商。
-
-断路器机制：服务商连续失败时，会进入冷却期，一段时间不再继续发起请求。详细说明见下方
-
+UniAPI是一个兼容OpenAI协议的API转发器，允许用户管理多个API密钥并在请求时根据模型随机选择合适的密钥。
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fzhangtyzzz%2Funi-api&env=ADMIN_API_KEY,TEMP_API_KEY,ENVIRONMENT&envDescription=%60ADMIN_API_KEY%60%3A%20%E7%AE%A1%E7%90%86%E5%91%98API%E5%AF%86%E9%92%A5%EF%BC%8C%E7%94%A8%E4%BA%8E%E8%AE%BF%E9%97%AE%E7%AE%A1%E7%90%86%E9%9D%A2%E6%9D%BF%EF%BC%88%E5%BF%85%E9%A1%BB%E8%AE%BE%E7%BD%AE%EF%BC%89%20%20%60TEMP_API_KEY_ONE%60%20%E5%92%8C%20%60TEMP_API_KEY%60%3A%20%E9%85%8D%E7%BD%AE2%E4%B8%AA%E5%85%81%E8%AE%B8%E8%AE%BF%E9%97%AE%E7%9A%84API%E5%AF%86%E9%92%A5%20%60REDIS_URL%60%3A%20Redis%E8%BF%9E%E6%8E%A5URL%EF%BC%88%E5%A6%82%E6%9E%9C%E8%A6%81%E6%8C%81%E4%B9%85%E5%8C%96%E5%AD%98%E5%82%A8%E9%85%8D%E7%BD%AE%EF%BC%89%20%60ENVIRONMENT%60%3A%20%E8%AE%BE%E7%BD%AE%E4%B8%BA%60production%60%E4%BB%A5%E7%A6%81%E7%94%A8%E5%BC%80%E5%8F%91%E6%A8%A1%E5%BC%8F%E4%B8%8B%E7%9A%84%E9%BB%98%E8%AE%A4API%E5%AF%86%E9%92%A5)
 
