@@ -52,44 +52,73 @@ class StreamHandler:
             if not chunk_data:
                 return {'raw_data': '', 'content': '', 'reasoning_content': '', 'is_done': False}
 
-            # 移除SSE前缀 "data: "
+            # 将字节转换为字符串
             if isinstance(chunk_data, bytes):
-                if chunk_data.startswith(b'data: '):
-                    json_str = chunk_data[6:].decode('utf-8').strip()
-                else:
-                    json_str = chunk_data.decode('utf-8').strip()
+                chunk_str = chunk_data.decode('utf-8')
             else:
-                json_str = str(chunk_data).strip()
+                chunk_str = str(chunk_data)
 
-            # 处理SSE结束标记
-            if json_str == '[DONE]':
-                return {'raw_data': '[DONE]', 'content': '', 'reasoning_content': '', 'is_done': True}
+            # 分割多行数据
+            lines = [line.strip() for line in chunk_str.split('\n') if line.strip()]
+            results = []
 
-            # 解析JSON
-            data = json.loads(json_str)
+            for line in lines:
+                # 处理[DONE]标记
+                if line == 'data: [DONE]':
+                    return {'raw_data': '[DONE]', 'content': '', 'reasoning_content': '', 'is_done': True}
 
-            # 提取content和reasoning_content
-            content = ""
-            reasoning_content = ""
+                # 移除SSE前缀 "data: "
+                if line.startswith('data: '):
+                    json_str = line[6:].strip()
+                else:
+                    json_str = line.strip()
 
-            if 'choices' in data and len(data.get('choices', [])) > 0:
-                choice = data['choices'][0]
-                if 'delta' in choice:
-                    delta = choice.get('delta', {})
-                    content = delta.get('content', '')
-                    reasoning_content = delta.get('reasoning_content', '')
-                elif 'message' in choice:
-                    message = choice.get('message', {})
-                    content = message.get('content', '')
-                    reasoning_content = message.get('reasoning_content', '')
+                # 解析JSON
+                data = json.loads(json_str)
 
-            # 返回原始数据和提取的内容
-            return {
-                'raw_data': data,
-                'content': content or '',  # 确保返回空字符串而不是None
-                'reasoning_content': reasoning_content or '',  # 确保返回空字符串而不是None
+                # 检查是否是finish_reason消息
+                if 'choices' in data and len(data.get('choices', [])) > 0:
+                    choice = data['choices'][0]
+                    if choice.get('finish_reason') is not None:
+                        # 直接返回原始数据，让上层处理finish_reason
+                        return {'raw_data': data, 'content': '', 'reasoning_content': '', 'is_done': False}
+
+                    # 提取content和reasoning_content
+                    content = ""
+                    reasoning_content = ""
+                    if 'delta' in choice:
+                        delta = choice.get('delta', {})
+                        content = delta.get('content', '')
+                        reasoning_content = delta.get('reasoning_content', '')
+                    elif 'message' in choice:
+                        message = choice.get('message', {})
+                        content = message.get('content', '')
+                        reasoning_content = message.get('reasoning_content', '')
+
+                    results.append({
+                        'raw_data': data,
+                        'content': content or '',
+                        'reasoning_content': reasoning_content or '',
+                        'is_done': False
+                    })
+
+            # 如果没有有效结果，返回空响应
+            if not results:
+                return {'raw_data': '', 'content': '', 'reasoning_content': '', 'is_done': False}
+
+            # 如果只有一个结果，直接返回它
+            if len(results) == 1:
+                return results[0]
+
+            # 如果有多个结果，合并它们
+            merged_result = {
+                'raw_data': results[-1]['raw_data'],  # 使用最后一个结果的raw_data
+                'content': ''.join(r['content'] for r in results),
+                'reasoning_content': ''.join(r['reasoning_content'] for r in results),
                 'is_done': False
             }
+            return merged_result
+
         except Exception as e:
             logger.error(f"解析响应块出错: {str(e)}, 原始数据: {chunk_data}")
             # 返回一个有效地响应，避免后续处理出错
@@ -201,7 +230,7 @@ class StreamHandler:
         done_sent = False
 
         try:
-            while True:
+            while not (self.upstream_complete and self.response_queue.empty()):
                 # 计算剩余的超时时间
                 elapsed_time = (datetime.now() - datetime.fromtimestamp(self.request_start_time/1000)).total_seconds()
                 remaining_time = self.timeout_seconds - elapsed_time - 5  # 留5秒缓冲
