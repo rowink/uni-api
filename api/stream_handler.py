@@ -10,6 +10,8 @@ from fastapi.responses import StreamingResponse
 from api.models import ModelRequestRecord
 from api.index import record_model_request
 
+CHUNK_SPLITTER = b"\n\n"
+
 logger = logging.getLogger("uniapi")
 
 
@@ -44,56 +46,61 @@ class StreamHandler:
         self.current_message_id = None
         self.current_model = None
 
+        # 是否输出finish reason
+        self.finish_reason_sent = False
+
     @staticmethod
-    def extract_content_from_chunk(chunk_data):
+    def extract_content_from_chunk(msg):
         """解析JSON并提取content和reasoning_content字段"""
         try:
-            # 检查输入是否为空
-            if not chunk_data:
-                return {'raw_data': '', 'content': '', 'reasoning_content': '', 'is_done': False}
+            # 非openAi数据消息，可能为其他心跳包或控制消息，直接返回
+            if not msg.startswith(b'data: '):
+                return {'raw_data': msg + CHUNK_SPLITTER}
 
             # 移除SSE前缀 "data: "
-            if isinstance(chunk_data, bytes):
-                if chunk_data.startswith(b'data: '):
-                    json_str = chunk_data[6:].decode('utf-8').strip()
-                else:
-                    json_str = chunk_data.decode('utf-8').strip()
-            else:
-                json_str = str(chunk_data).strip()
+            data = msg[6:]
+            if not data or data.isspace():
+                return {'raw_data': msg + CHUNK_SPLITTER}
 
-            # 处理SSE结束标记
-            if json_str == '[DONE]':
-                return {'raw_data': '[DONE]', 'content': '', 'reasoning_content': '', 'is_done': True}
+            if data == b'[DONE]':
+                return {'raw_data': msg + CHUNK_SPLITTER}
 
-            # 解析JSON
-            data = json.loads(json_str)
+
+            try:
+                json_data = json.loads(data)
+            except json.JSONDecodeError:
+                return {'raw_data': data + CHUNK_SPLITTER}
+
+            if not json_data:
+                return {'raw_data': data + CHUNK_SPLITTER}
 
             # 提取content和reasoning_content
             content = ""
             reasoning_content = ""
+            finish_reason = None
 
-            if 'choices' in data and len(data.get('choices', [])) > 0:
-                choice = data['choices'][0]
+            if 'choices' in json_data and len(json_data.get('choices', [])) > 0:
+                choice = json_data['choices'][0]
                 if 'delta' in choice:
                     delta = choice.get('delta', {})
                     content = delta.get('content', '')
                     reasoning_content = delta.get('reasoning_content', '')
-                elif 'message' in choice:
-                    message = choice.get('message', {})
-                    content = message.get('content', '')
-                    reasoning_content = message.get('reasoning_content', '')
+                if 'finish_reason' in choice:
+                    finish_reason = choice.get('finish_reason', None)
 
             # 返回原始数据和提取的内容
             return {
-                'raw_data': data,
+                'raw_data': data + CHUNK_SPLITTER,
                 'content': content or '',  # 确保返回空字符串而不是None
                 'reasoning_content': reasoning_content or '',  # 确保返回空字符串而不是None
-                'is_done': False
+                'json_data': json_data,  # 解析好的原始json数据
+                'need_process': True,  # 标记需要处理
+                'finish_reason': finish_reason
             }
         except Exception as e:
-            logger.error(f"解析响应块出错: {str(e)}, 原始数据: {chunk_data}")
-            # 返回一个有效地响应，避免后续处理出错
-            return {'raw_data': '', 'content': '', 'reasoning_content': '', 'is_done': False}
+            logger.error(f"解析响应块出错: {str(e)}, 原始数据: {msg}")
+            # 返回None，后面过滤
+            return None
 
     async def consume_upstream(self, client):
         """消费上游响应的协程"""
@@ -113,6 +120,8 @@ class StreamHandler:
                 # 开始记录消费时间
                 self.consumption_start_time = datetime.now()
 
+                buffer = b""
+
                 # 直接逐块读取和处理内容
                 async for chunk in response.aiter_bytes():
                     if not chunk:  # 跳过空块
@@ -123,21 +132,23 @@ class StreamHandler:
                         self.first_token = True
                         self.request_record.first_token_rt = first_token_time - self.request_start_time
 
+                    buffer += chunk
+
                     # 解析并提取内容
-                    parsed_chunk = self.extract_content_from_chunk(chunk)
-                    if parsed_chunk.get('is_done', False):
-                        # 如果是[DONE]标记，发送一个完成消息
-                        done_msg = "data: [DONE]\n\n".encode('utf-8')
-                        await self.response_queue.put(done_msg)
-                    else:
+                    while CHUNK_SPLITTER in buffer:
+                        msg, buffer = buffer.split(CHUNK_SPLITTER, 1)
+                        parsed_chunk = self.extract_content_from_chunk(msg)
+                        if not parsed_chunk:
+                            continue
+
                         # 更新总字符数（确保使用空字符串的长度）
                         content = parsed_chunk.get('content', '') or ''
                         reasoning_content = parsed_chunk.get('reasoning_content', '') or ''
                         self.total_chars += len(content)
                         self.total_chars += len(reasoning_content)
-                        # 将解析后的内容添加到队列
-                        if content or reasoning_content:  # 只有当有内容时才添加到队列
-                            await self.response_queue.put(parsed_chunk)
+                        # 不为空就要添加到队列，这样才能正常结束
+                        await self.response_queue.put(parsed_chunk)
+
 
         except Exception as e:
             logger.error(f"消费上游响应时出错: {str(e)}", exc_info=True)
@@ -152,20 +163,38 @@ class StreamHandler:
             return chunk_data
 
         async with self.output_lock:
+
+            # {
+            #     'raw_data': data + CHUNK_SPLITTER,
+            #     'content': content or '',  # 确保返回空字符串而不是None
+            #     'reasoning_content': reasoning_content or '',  # 确保返回空字符串而不是None
+            #     'json_data': json_data,  # 解析好的原始json数据
+            #     'need_process': True,  # 标记需要处理
+            # }
+
+            need_process = chunk_data.get('need_process', False)
+            if not need_process:
+                return chunk_data['raw_data']
+
             responses = []
+
+            json_data = chunk_data.get('json_data', {})
+
+            msg_id = json_data.get('id', '')
+            msg_model = json_data.get('model', '')
+            msg_obj = json_data.get('object', '')
+            msg_created = json_data.get('created', 0)
+            msg_finish_reason = json_data.get('finish_reason', None)
+
+            if not self.current_message_id:
+                self.current_message_id = msg_id
+            if not self.current_model:
+                self.current_model = msg_model
 
             for field in ['content', 'reasoning_content']:
                 text = chunk_data.get(field, '')
                 if not text:
                     continue
-
-                # 如果是新的字段或新的消息，更新当前状态
-                if (self.current_field != field or
-                        self.current_message_id != chunk_data.get('raw_data', {}).get('id') or
-                        self.current_model != chunk_data.get('raw_data', {}).get('model')):
-                    self.current_field = field
-                    self.current_message_id = chunk_data.get('raw_data', {}).get('id')
-                    self.current_model = chunk_data.get('raw_data', {}).get('model')
 
                 # 简单地将文本分成小块
                 for i in range(0, len(text), 3):
@@ -175,10 +204,10 @@ class StreamHandler:
 
                     # 创建一个完整的OpenAI格式响应
                     response = {
-                        "id": self.current_message_id,
-                        "object": "chat.completion.chunk",
-                        "created": int(time.time()),
-                        "model": self.current_model,
+                        "id": msg_id,
+                        "object": msg_obj,
+                        "created": msg_created,
+                        "model": msg_model,
                         "choices": [
                             {
                                 "index": 0,
@@ -188,6 +217,12 @@ class StreamHandler:
                             }
                         ]
                     }
+                    # 仅在循环的最后一次添加上游可能存在的finish_reason
+                    if i == len(text) - 3 or len(small_chunk) < 3:
+                        if msg_finish_reason:
+                            self.finish_reason_sent = True
+                        response["choices"][0]["finish_reason"] = msg_finish_reason
+
                     responses.append(f"data: {json.dumps(response)}\n\n".encode('utf-8'))
 
             return responses
@@ -203,7 +238,7 @@ class StreamHandler:
         try:
             while True:
                 # 计算剩余的超时时间
-                elapsed_time = (datetime.now() - datetime.fromtimestamp(self.request_start_time/1000)).total_seconds()
+                elapsed_time = (datetime.now() - datetime.fromtimestamp(self.request_start_time / 1000)).total_seconds()
                 remaining_time = self.timeout_seconds - elapsed_time - 5  # 留5秒缓冲
 
                 # 如果剩余时间极少或上游完成，不做延迟直接输出
@@ -216,20 +251,6 @@ class StreamHandler:
                         timeout=0.1 if not self.upstream_complete else None
                     )
                 except asyncio.TimeoutError:
-                    if self.upstream_complete and self.response_queue.empty() and not done_sent:
-                        # 发送finish_reason消息
-                        if self.current_message_id and self.current_model:
-                            finish_msg = {
-                                "id": self.current_message_id,
-                                "object": "chat.completion.chunk",
-                                "created": int(time.time()),
-                                "model": self.current_model,
-                                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
-                            }
-                            yield f"data: {json.dumps(finish_msg)}\n\n".encode('utf-8')
-                        yield "data: [DONE]\n\n".encode('utf-8')
-                        done_sent = True
-                        break
                     continue
 
                 if not chunk_data:
@@ -240,11 +261,11 @@ class StreamHandler:
                 if not processed_chunks:
                     continue
 
-                # 如果是错误消息或[DONE]标记，直接输出
+                # 如果非数组，直接输出
                 if isinstance(processed_chunks, bytes):
-                    if chunk_data == b'data: [DONE]\n\n' and not done_sent:
-                        # 在[DONE]之前发送finish_reason消息
-                        if self.current_message_id and self.current_model:
+                    if b'[DONE]' in processed_chunks:
+                        if not self.finish_reason_sent:
+                            self.finish_reason_sent = True
                             finish_msg = {
                                 "id": self.current_message_id,
                                 "object": "chat.completion.chunk",
@@ -253,16 +274,13 @@ class StreamHandler:
                                 "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
                             }
                             yield f"data: {json.dumps(finish_msg)}\n\n".encode('utf-8')
-                        yield chunk_data
-                        done_sent = True
-                        break
-                    elif not chunk_data.startswith(b'data: [DONE]'):  # 只输出非[DONE]的错误消息
                         yield processed_chunks
                         break
+                    yield processed_chunks
                     continue
 
-                # 默认情况下，按照15个字符每秒
-                ideal_speed = ideal_speed or 15
+                # 默认情况下，按照20个字符每秒
+                ideal_speed = ideal_speed or 20
 
                 # 计算输出速度（如果收集了足够的样本）
                 if self.total_chars >= min_chars_for_speed:
@@ -289,7 +307,7 @@ class StreamHandler:
                         target_interval = 1.0 / ideal_speed  # 每个字符的理想间隔
                         if time_since_last < target_interval:
                             await asyncio.sleep(target_interval - time_since_last)
-                    
+
                     yield chunk
                     time_since_last = 0
                     last_output_time = time.time()
@@ -298,18 +316,6 @@ class StreamHandler:
             logger.error(f"生成小块时出错: {str(e)}", exc_info=True)
             error_msg = f"data: {{\"error\":\"生成小块时出错: {str(e)}\"}}\n\n".encode()
             yield error_msg
-            # 发送finish_reason消息（错误情况）
-            if not done_sent:
-                if self.current_message_id and self.current_model:
-                    finish_msg = {
-                        "id": self.current_message_id,
-                        "object": "chat.completion.chunk",
-                        "created": int(time.time()),
-                        "model": self.current_model,
-                        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
-                    }
-                    yield f"data: {json.dumps(finish_msg)}\n\n".encode('utf-8')
-                yield "data: [DONE]\n\n".encode('utf-8')
 
     async def process_stream(self):
         """处理流式响应"""
