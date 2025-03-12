@@ -236,7 +236,7 @@ class StreamHandler:
         done_sent = False
 
         try:
-            while (not self.upstream_complete) or (not self.response_queue.empty):
+            while True:
                 # 计算剩余的超时时间
                 elapsed_time = (datetime.now() - datetime.fromtimestamp(self.request_start_time / 1000)).total_seconds()
                 remaining_time = self.timeout_seconds - elapsed_time - 5  # 留5秒缓冲
