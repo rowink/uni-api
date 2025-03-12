@@ -20,10 +20,12 @@ UniAPI是一个兼容OpenAI协议的API转发器，允许用户管理多个API�
 ![image](https://github.com/user-attachments/assets/6e9fc577-e8c2-4693-a677-614b7328b0ed)
 ### 流式效果
 <p align="center">  
-    <img src="assets/origin_stream.gif" alt="优化前" width="170" style="display: inline-block; margin: 5px;"/>  
-    <img src="assets/opt_stream.gif" alt="优化后" width="170" style="display: inline-block; margin: 5px;"/>  
+    <img src="assets/origin_stream.gif" alt="优化前" width="350" style="display: inline-block; margin: 5px;"/>  
+    <img src="assets/opt_stream.gif" alt="优化后" width="350" style="display: inline-block; margin: 5px;"/>  
 </p>  
-
+<p align="center">  
+    左:优化前 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;右:优化后  
+</p>  
 
 ## 功能特点
 
