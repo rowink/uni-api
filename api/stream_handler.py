@@ -279,8 +279,8 @@ class StreamHandler:
                     yield processed_chunks
                     continue
 
-                # 默认情况下，按照20个字符每秒
-                ideal_speed = ideal_speed or 20
+                # 默认情况下，按照50个字符每秒
+                ideal_speed = ideal_speed or 50
 
                 # 计算输出速度（如果收集了足够的样本）
                 if self.total_chars >= min_chars_for_speed:
