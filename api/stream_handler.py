@@ -236,7 +236,7 @@ class StreamHandler:
         done_sent = False
 
         try:
-            while True:
+            while (not self.upstream_complete) or (not self.response_queue.empty):
                 # 计算剩余的超时时间
                 elapsed_time = (datetime.now() - datetime.fromtimestamp(self.request_start_time / 1000)).total_seconds()
                 remaining_time = self.timeout_seconds - elapsed_time - 5  # 留5秒缓冲
@@ -289,7 +289,7 @@ class StreamHandler:
                         _ideal_speed = self.total_chars / elapsed_seconds
                         # 确保速度在合理范围内
                         _ideal_speed = max(min(_ideal_speed, 100), 5)  # 每秒5-200个字符
-                        ideal_speed = _ideal_speed * 0.4 + ideal_speed * 0.6
+                        ideal_speed = _ideal_speed * 0.7 + ideal_speed * 0.3
                         logger.debug(f"计算得到的理想速度: {ideal_speed} 字符/秒")
 
                 # 如果剩余时间不足，加速输出
@@ -303,8 +303,8 @@ class StreamHandler:
                 for chunk in processed_chunks:
                     # 只在非无延迟模式下控制速度
                     if not no_delay:
-                        # 计算应该等待的时间
-                        target_interval = 1.0 / ideal_speed  # 每个字符的理想间隔
+                        # 计算应该等待的时间，因为每个chunk理想情况为3个字符，所以这里要用3除
+                        target_interval = 3.0 / ideal_speed  # 每个字符的理想间隔
                         if time_since_last < target_interval:
                             await asyncio.sleep(target_interval - time_since_last)
 
