@@ -8,6 +8,7 @@ from datetime import datetime
 import httpx
 from fastapi.responses import StreamingResponse
 from api.models import ModelRequestRecord
+from api.models import TokenBucket
 from api.index import record_model_request
 
 CHUNK_SPLITTER = b"\n\n"
@@ -30,6 +31,8 @@ class StreamHandler:
         self.response_queue = asyncio.Queue()
         # 标记上游响应是否已经全部接收完毕
         self.upstream_complete = False
+        # 标记上游响应是否出错
+        self.upstream_error = False
         # 记录总字符数和消费时间，用于计算理想流速
         self.total_chars = 0
         self.consumption_start_time = None
@@ -64,7 +67,6 @@ class StreamHandler:
 
             if data == b'[DONE]':
                 return {'raw_data': msg + CHUNK_SPLITTER}
-
 
             try:
                 json_data = json.loads(data)
@@ -113,6 +115,7 @@ class StreamHandler:
             ) as response:
                 # 检查状态码
                 if not response.is_success:
+                    self.upstream_error = True
                     error_msg = f"data: {{\"error\":\"上游服务器返回错误: {response.status_code}\"}}\n\n".encode()
                     await self.response_queue.put(error_msg)
                     return
@@ -149,9 +152,9 @@ class StreamHandler:
                         # 不为空就要添加到队列，这样才能正常结束
                         await self.response_queue.put(parsed_chunk)
 
-
         except Exception as e:
             logger.error(f"消费上游响应时出错: {str(e)}", exc_info=True)
+            self.upstream_error = True
             error_msg = f"data: {{\"error\":\"消费上游响应时出错: {str(e)}\"}}\n\n".encode()
             await self.response_queue.put(error_msg)
         finally:
@@ -230,13 +233,14 @@ class StreamHandler:
     async def generate_small_chunks(self):
         """异步生成小块内容"""
         # 初始化变量
-        ideal_speed = None  # 初始时不设置速度
+        ideal_speed = 50  # 初始速率
+        max_speed = 120
         last_output_time = time.time()
         min_chars_for_speed = 20  # 至少收集20个字符后再计算速度
-        done_sent = False
+        bucket = TokenBucket(rate=ideal_speed, capacity=max_speed)
 
         try:
-            while True:
+            while not self.upstream_error:
                 # 计算剩余的超时时间
                 elapsed_time = (datetime.now() - datetime.fromtimestamp(self.request_start_time / 1000)).total_seconds()
                 remaining_time = self.timeout_seconds - elapsed_time - 5  # 留5秒缓冲
@@ -254,6 +258,8 @@ class StreamHandler:
                     continue
 
                 if not chunk_data:
+                    if self.upstream_error:
+                        break
                     continue
 
                 # 处理数据块
@@ -279,38 +285,36 @@ class StreamHandler:
                     yield processed_chunks
                     continue
 
-                # 默认情况下，按照50个字符每秒
-                ideal_speed = ideal_speed or 50
-
                 # 计算输出速度（如果收集了足够的样本）
                 if self.total_chars >= min_chars_for_speed:
                     elapsed_seconds = (datetime.now() - self.consumption_start_time).total_seconds()
                     if elapsed_seconds > 0:
-                        _ideal_speed = self.total_chars / elapsed_seconds
-                        # 确保速度在合理范围内
-                        _ideal_speed = max(min(_ideal_speed, 100), 5)  # 每秒5-200个字符
-                        ideal_speed = _ideal_speed * 0.7 + ideal_speed * 0.3
-                        logger.debug(f"计算得到的理想速度: {ideal_speed} 字符/秒")
+                        _ideal_speed = self.total_chars * 0.85 / elapsed_seconds
+                        # 以最新速度为准，考虑一下之前，避免变化过大。同时速度不可以超过总速度的85%，用来保证流畅视觉效果
+                        _ideal_speed = min(_ideal_speed * 0.7 + ideal_speed * 0.3, _ideal_speed)
+                        ideal_speed = max(min(_ideal_speed, max_speed), 5)  # 每秒5-100个字符
+                        bucket.update_rate(ideal_speed)
 
                 # 如果剩余时间不足，加速输出
                 if remaining_time < 10:
                     ideal_speed = ideal_speed * 2
 
-                current_time = time.time()
-                time_since_last = current_time - last_output_time
-
                 # 输出所有块
                 for chunk in processed_chunks:
                     # 只在非无延迟模式下控制速度
                     if not no_delay:
-                        # 计算应该等待的时间，因为每个chunk理想情况为3个字符，所以这里要用3除
-                        target_interval = 1.2 / ideal_speed  # 每个字符的理想间隔
-                        if time_since_last < target_interval:
-                            await asyncio.sleep(target_interval - time_since_last)
+                        # 每个chunk 需要消耗2-3个令牌，先按照2个好了
+                        while not bucket.consume(2):
+                            await asyncio.sleep(0.1)
+
+                        now = time.time()
+                        time_since_last_send = now - last_output_time
+                        expected_time_since_last_send = 2 / bucket.rate  # 发送 2 个单位的数据期望的时间间隔
+                        if time_since_last_send < expected_time_since_last_send:
+                            await asyncio.sleep(expected_time_since_last_send - time_since_last_send)  # 等待到下次可以发送的时间
+                        last_output_time = time.time()  # 更新上次发送时间
 
                     yield chunk
-                    time_since_last = 0
-                    last_output_time = time.time()
 
         except Exception as e:
             logger.error(f"生成小块时出错: {str(e)}", exc_info=True)
