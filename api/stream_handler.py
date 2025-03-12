@@ -304,7 +304,7 @@ class StreamHandler:
                     # 只在非无延迟模式下控制速度
                     if not no_delay:
                         # 计算应该等待的时间，因为每个chunk理想情况为3个字符，所以这里要用3除
-                        target_interval = 3.0 / ideal_speed  # 每个字符的理想间隔
+                        target_interval = 1.2 / ideal_speed  # 每个字符的理想间隔
                         if time_since_last < target_interval:
                             await asyncio.sleep(target_interval - time_since_last)
 
