@@ -120,8 +120,8 @@ class StreamHandler:
                     await self.response_queue.put(error_msg)
                     return
 
-                # 开始记录消费时间
-                self.consumption_start_time = datetime.now()
+                # 记录开始消费时间
+                self.consumption_start_time = self.consumption_start_time or datetime.now()
 
                 buffer = b""
 
@@ -289,8 +289,8 @@ class StreamHandler:
                 if self.total_chars >= min_chars_for_speed:
                     elapsed_seconds = (datetime.now() - self.consumption_start_time).total_seconds()
                     if elapsed_seconds > 0:
-                        _ideal_speed = self.total_chars * 0.85 / elapsed_seconds
-                        # 以最新速度为准，考虑一下之前，避免变化过大。同时速度不可以超过总速度的85%，用来保证流畅视觉效果
+                        _ideal_speed = self.total_chars * 0.9 / elapsed_seconds
+                        # 以最新速度为准，考虑一下之前，避免变化过大。同时速度不可以超过总速度的90%，用来保证流畅视觉效果
                         _ideal_speed = min(_ideal_speed * 0.7 + ideal_speed * 0.3, _ideal_speed)
                         ideal_speed = max(min(_ideal_speed, max_speed), 5)  # 每秒5-100个字符
                         bucket.update_rate(ideal_speed)
